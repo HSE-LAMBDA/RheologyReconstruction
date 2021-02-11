@@ -1,3 +1,5 @@
+#package 
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -7,12 +9,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from datetime import datetime
+from dataset import SeismogramBatch
 from tqdm.notebook import tqdm
-from pathing import create_nonexistent_directory
-from utils   import get_latest_snapshot_name
-from random import random, sample
-from sklearn.metrics import accuracy_score
+from utils import get_latest_snapshot_name, make_snapshot_directory
+from neural_networks.loss import weightedBCELoss
 from IPython.display import clear_output
+
 
 
 class BaseTrainer:
@@ -62,14 +64,14 @@ class BaseTrainer:
         self.logger        = logger
         #if self.logger is not None: self.logger.setup_loss_fn(self.loss_fn)
         
-        self.snapshot_path     = get_snapshot_directory(snapshot_path)
+        self.snapshot_path     = make_snapshot_directory(snapshot_path)
         self.snapshot_interval = snapshot_interval
 
         # internal snapshot parameters
         self.date_format       = '%Y-%m-%d_%H-%M-%S'
 
 
-   	 def load_latest_snapshot(self):
+    def load_latest_snapshot(self):
 
         sname    = get_latest_snapshot_name(self.snapshot_path)
         snapshot = torch.load(sname)
@@ -120,46 +122,49 @@ class BaseTrainer:
 
         batch_size = 64
 
-       	if self.val_dataset is None:
+        if self.val_dataset is None:
 
-			batch_gen = torch.utils.data.DataLoader(
-            	self.train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+            batch_gen = torch.utils.data.DataLoader(
+                self.train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
+                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
+            )
+
         else:
-        	batch_gen = torch.utils.data.DataLoader(
-            	self.val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+            batch_gen = torch.utils.data.DataLoader(
+                self.val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
+                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
+            )
 
-       
-       	m_values = {m.name: [] for m in metrics_list}
+
+        m_values = {m.name: [] for m in metrics_list}
 
         with torch.no_grad():
 
-        	if self.val_dataset is None:
+            if self.val_dataset is None:
             
-            	val_batch = next(iter(batch_gen)).to(self.device)
-            	preds = self.model.forward(val_batch)
+                val_batch = next(iter(batch_gen)).to(self.device)
+                preds = self.model.forward(val_batch)
 
-            	for m in metrics_list:
-            		m_values[m.name].append(m(
-            			preds.cpu().data.numpy(),
-            			val_batch.masks.cpu().data.numpy(),
-            			val_batch.weights.cpu().data.numpy()
-            		))
-
+                for m in metrics_list:
+                    m_values[m.name].append(m(
+                        preds.cpu().data.numpy(),
+                        val_batch.masks.cpu().data.numpy(),
+                        val_batch.weights.cpu().data.numpy()
+                    ))
 
             else:
             	
-            	for val_batch in batch_gen:
+                for val_batch in batch_gen:
 
-            		val_batch = val_batch.to(self.device)
+                    val_batch = val_batch.to(self.device)
+                    preds = self.model.forward(val_batch)
 
-            		preds = self.model.forward(val_batch)
-
-            		for m in metrics_list:
-            			m_values[m.name].append(m(
-            				preds.cpu().data.numpy(),
-            				val_batch.masks.cpu().data.numpy(),
-            				val_batch.weights.cpu().data.numpy()
-            			))
+                    for m in metrics_list:
+                        m_values[m.name].append(m(
+                            preds.cpu().data.numpy(),
+                            val_batch.masks.cpu().data.numpy(),
+                            val_batch.weights.cpu().data.numpy()
+                        ))
 
         for k in m_values.keys(): m_values[k] = np.mean(np.array(m_values[k]))
 
@@ -173,7 +178,8 @@ class BaseTrainer:
 
         train_batch_gen = torch.utils.data.DataLoader(
             self.train_dataset, batch_size=batch_size, 
-            shuffle=True, pin_memory=True
+            shuffle=True, pin_memory=True, num_workers=5,
+            collate_fn=lambda x: SeismogramBatch(x)
         )
 
 
@@ -186,32 +192,31 @@ class BaseTrainer:
 
             for batch in tqdm(train_batch_gen, desc=f'Epoch {current_epoch + 1} of {epochs}'): 
 
-               	self.model.zero_grad()
-        		self.optimizer.zero_grad()
+                self.model.zero_grad()
+                self.optimizer.zero_grad()
 
-        		batch  = batch.to(self.device)
-        		preds  = self.model.forward(batch_seismograms)
+                batch  = batch.to(self.device)
+                preds  = self.model.forward(batch.seismograms)
 
+                """
+                Предсказания сети необходимо 
+                1) Перенести на неравноменую сетку
+                2) Загрузить эту сетку в fenics
+                3) С его помощью посчитать градиент от функционала ошибки по выходу сети
+                4) Применить chain rule
         		"""
-				Предсказания сети необходимо 
-				1) Перенести на неравноменую сетку
-				2) Загрузить эту сетку в fenics
-				3) С его помощью посчитать градиент от функционала ошибки по выходу сети
-				4) Применить chain rule
-        		"""
 
-        		#TODO: implement
-        		L, dL_dm = get_gradient_from_solver(preds.cpu().data.numpy())
+                #TODO: implement
+                L, dL_dm = get_gradient_from_solver(preds.cpu().data.numpy())
 
-        		preds.backward(dL_dm)
+                preds.backward(dL_dm)
 
-       		    self.optimizer.step()
-        		torch.cuda.empty_cache()
+                self.optimizer.step()
+                torch.cuda.empty_cache()
 
-        		step += 1 
+                step += 1
 
-        		self.logger.log(self, step, L.item())
-	       		if step % self.snapshot_interval == 0 : self.save_model()
+                self.logger.log(self, step, L.item())
+                if step % self.snapshot_interval == 0 : self.save_model()
 
-
-	       	clear_output(wait=True)
+            clear_output(wait=True)

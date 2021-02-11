@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from modules import NormFactory, ActivationFactory
-from func_util import constant
+from .modules import NormFactory, ActivationFactory
+from .func_utils import constant
 
 
 class SegNet(nn.Module):
@@ -37,7 +37,7 @@ class SegNet(nn.Module):
                 nn.Dropout2d(dropout_rate),
                 nn.Conv2d(outc, outc, kernel_size=2, stride=2), # convpool
                 norm_generator(outc),
-                activation_generator().
+                activation_generator(),
                 nn.Dropout2d(dropout_rate)
             )
 
@@ -68,14 +68,13 @@ class SegNet(nn.Module):
                 nn.Dropout2d(dropout_rate)
             )
 
-    @const
+    @constant
     @staticmethod
     def dim_x(): return 1024
 
-    @const
+    @constant
     @staticmethod
-    def dim_y(): return 1024 
-
+    def dim_y(): return 64 
 
 
     def __init__(self):
@@ -84,9 +83,7 @@ class SegNet(nn.Module):
 	  
         super().__init__()
 
-        # hyperparameters
-
-        self.input_dim = [1024, 64]
+        # hyperparameter
 
 
         encoder_channels = [64, 128, 256]
@@ -97,27 +94,25 @@ class SegNet(nn.Module):
         activation = 'ReLU'
 
         norm_factory   = NormFactory()
-        norm_generator = lambda x: factory(norm_layer, x)
-
-        act_factory   = ActivationFactory()
-        act_generator = lambda x: act_factory(act_layer, x)
-
+        norm_generator = lambda x: norm_factory(norm_layer, x)
+        
+        act_factory = ActivationFactory()
+        def act_generator(): return act_factory(activation)
 
         # ----------------- Encoder -------------------
 
         encoder = [
             nn.Sequential(
                 nn.Conv2d(1, encoder_channels[0],   kernel_size=3, dilation=2, padding=2),
-                create_norm_layer(encoder_channels[0]),
-                nn.ReLU(),
+                norm_generator(encoder_channels[0]),
+                act_generator(),
                 nn.Dropout2d(dropout_rate),
                 nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=3, dilation=2, padding=2),
-                create_norm_layer(encoder_channels[0]),
-                nn.ReLU(),
-                nn.Dropout2d(dropout_rate),
+                norm_generator(encoder_channels[0]),
+                act_generator(),
                 nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=3, dilation=2, padding=2),
-                create_norm_layer(encoder_channels[0]),
-                nn.ReLU(),
+                norm_generator(encoder_channels[0]),
+                act_generator(),
                 nn.Dropout2d(dropout_rate),
                 nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=(16, 1), stride=(16, 1)),
                 nn.ReLU(),
@@ -143,16 +138,16 @@ class SegNet(nn.Module):
 
         decoder.append(nn.Sequential(
             nn.ConvTranspose2d(decoder_channels[-1], decoder_channels[-1], kernel_size=2, stride=2),
-            nn.BatchNorm2d(decoder_channels[-1]),
-            nn.ReLU(),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
             nn.Dropout2d(dropout_rate),
             nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
-            nn.BatchNorm2d(decoder_channels[-1]),
-            nn.ReLU(),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
             nn.Dropout2d(dropout_rate),
             nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
-            nn.BatchNorm2d(decoder_channels[-1]),
-            nn.ReLU(),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
             nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
             nn.Sigmoid()
         ))

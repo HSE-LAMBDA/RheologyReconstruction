@@ -89,7 +89,7 @@ class SeismogramDataset(Dataset):
     
     """
 
-    def __init__(self, root_dir, scaling_factor=1e7):
+    def __init__(self, root_dir):
         """
         :param root_dir (string): 
             A root directory of the dataset. Following layout is assumed:
@@ -110,8 +110,6 @@ class SeismogramDataset(Dataset):
         self.masks = [(file, re.findall(r'(\d+)', file)[-1]) for file in os.listdir(self.mesh_dir)]
         self.masks = [x[0] for x in list(sorted(self.masks, key= lambda x: x[1]))]
 
-        self.scaling_factor = scaling_factor
-
     def __len__(self):
         return len(self.seismograms)
 
@@ -120,7 +118,7 @@ class SeismogramDataset(Dataset):
         sname = os.path.join(self.data_dir, self.seismograms[idx])
         mname = os.path.join(self.mesh_dir, self.masks[idx])
         
-        s = torch.from_numpy(np.load(sname)) * self.scaling_factor
+        s = torch.from_numpy(np.load(sname))
         m = torch.from_numpy(np.load(mname))
         w = compute_weight_map(m)
 
