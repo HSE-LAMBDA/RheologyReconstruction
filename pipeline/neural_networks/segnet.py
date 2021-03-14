@@ -4,7 +4,7 @@ from .modules import NormFactory, ActivationFactory
 from .func_utils import constant
 
 
-class SegNet(nn.Module):
+class SegNet_3Head(nn.Module):
 
     """
     See https://arxiv.org/abs/1511.00561 for base article
@@ -134,9 +134,10 @@ class SegNet(nn.Module):
         for inc, outc in zip(decoder_channels[:-1], decoder_channels[1:]):
             decoder.append(
                 self.create_decoder_section(inc, outc, norm_generator, act_generator, dropout_rate))
-        
 
-        decoder.append(nn.Sequential(
+        self.decoder = nn.Sequential(*decoder)
+
+        self.heads = [nn.Sequential(
             nn.ConvTranspose2d(decoder_channels[-1], decoder_channels[-1], kernel_size=2, stride=2),
             norm_generator(decoder_channels[-1]),
             act_generator(),
@@ -150,11 +151,15 @@ class SegNet(nn.Module):
             act_generator(),
             nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
             nn.Sigmoid()
-        ))
-
-        self.decoder = nn.Sequential(*decoder)
+        ) for _ in range(3)]
         
     
     def forward(self, x):
 
-        return self.decoder(self.encoder(x.unsqueeze(dim=1))).view(-1, 128, 128)
+        x = self.decoder(self.encoder(x.unsqueeze(dim=1)))
+
+        out0 = self.heads[0](x).view(-1, 128, 128)
+        out1 = self.heads[1](x).view(-1, 128, 128)
+        out2 = self.heads[2](x).view(-1, 128, 128)
+
+        return out0, out1, out2

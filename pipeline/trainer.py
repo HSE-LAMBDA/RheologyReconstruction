@@ -14,6 +14,7 @@ from tqdm.notebook import tqdm
 from utils import get_latest_snapshot_name, make_snapshot_directory
 from neural_networks.loss import weightedBCELoss
 from IPython.display import clear_output
+from dolfin_adjoint.adjoint_solver import adjoint_solver
 
 
 
@@ -207,16 +208,36 @@ class BaseTrainer:
         		"""
 
                 #TODO: implement
-                L, dL_dm = get_gradient_from_solver(preds.cpu().data.numpy())
 
-                preds.backward(dL_dm)
+                L = []
+
+                for i, (preds_lambda, preds_mu, preds_rho) in \
+                    enumerate(zip(preds[0], preds[1], preds[2])):
+
+                    preds_lambda = preds_lambda.cpu().detach().data.numpy()
+                    preds_mu     = preds_mu.cpu().detach().data.numpy()
+                    preds_rho    = preds_rho.cpu().detach().data.numpy()
+
+                    seismo = batch.seismograms[i].cpu().detach().numpy()
+
+                    adj_solver = adjoint_solver(preds_lambda, preds_mu, preds_rho, seismo)
+                    j, grad_lambda, grad_mu, grad_rho = adj_solver.backward()
+
+                    print(j)
+
+                    preds[0][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
+                    preds[1][i].backward(torch.from_numpy(grad_rho), retain_graph=True)
+                    preds[2][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
+
+                    L.append(j)
+
 
                 self.optimizer.step()
                 torch.cuda.empty_cache()
 
                 step += 1
 
-                self.logger.log(self, step, L.item())
+                if self.logger is not None: self.logger.log(self, step, np.mean(np.array(L)))
                 if step % self.snapshot_interval == 0 : self.save_model()
 
             clear_output(wait=True)
