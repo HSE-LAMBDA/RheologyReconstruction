@@ -1,0 +1,41 @@
+---
+
+  mesh:
+    bounding_box: # points to form integration area
+      p1: [0.0, 0.0]
+      p2: [2000., 2000.]
+    nx: 25
+    ny: 25
+
+  physics: # scale and factor for each rheological parameters
+      lambda:
+        scale_lambda : 1.0e+10
+        factor_lambda: 1.0e+9
+      mu:
+        scale_mu: 1.0e+9
+        factor_mu: 1.0e+8
+      rho:
+        scale_rho: 1.0e+3
+        factor_rho: 1.0e+2
+
+  task:
+    target_time: 4.0
+    source:
+      location: top
+      center: [1000.0, 2000.0]
+      radius: 200.
+      magnitude: 1.0e+06
+      cutoff_time: 0.4
+
+  method:
+    polynomial_type: CG
+    polynomial_order: 2
+    time_steps: 100
+    alphas: # two constants for generalized alpha-timestepping
+      alpha_f: 0.
+      alpha_m: 0.
+    LU_solver: petsc
+
+
+
+
