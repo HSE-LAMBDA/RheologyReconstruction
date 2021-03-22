@@ -14,7 +14,7 @@ from tqdm.notebook import tqdm
 from utils import get_latest_snapshot_name, make_snapshot_directory
 from neural_networks.loss import weightedBCELoss
 from IPython.display import clear_output
-from dolfin_adjoint.adjoint_solver import adjoint_solver
+from dolfin_adjoint.elasticity_solver import elasticity_solver
 
 
 
