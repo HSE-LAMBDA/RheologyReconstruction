@@ -68,30 +68,19 @@ class SegNet_3Head(nn.Module):
                 nn.Dropout2d(dropout_rate)
             )
 
-    @constant
-    @staticmethod
-    def dim_x(): return 1024
-
-    @constant
-    @staticmethod
-    def dim_y(): return 64 
-
-
     def __init__(self):
 
-        #TODO: parameters from markup language
-	  
+        #TODO: parameters from config 
         super().__init__()
 
-        # hyperparameter
-
+        self.input_size = 128
 
         encoder_channels = [64, 128, 256]
         decoder_channels = [256, 128, 64]
-        dropout_rate     = 0.15
+        dropout_rate     = 0.
 
-        norm_layer = 'batch'
-        activation = 'ReLU'
+        norm_layer = 'instance'
+        activation = 'CELU'
 
         norm_factory   = NormFactory()
         norm_generator = lambda x: norm_factory(norm_layer, x)
@@ -103,20 +92,10 @@ class SegNet_3Head(nn.Module):
 
         encoder = [
             nn.Sequential(
-                nn.Conv2d(1, encoder_channels[0],   kernel_size=3, dilation=2, padding=2),
-                norm_generator(encoder_channels[0]),
-                act_generator(),
-                nn.Dropout2d(dropout_rate),
-                nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=3, dilation=2, padding=2),
-                norm_generator(encoder_channels[0]),
-                act_generator(),
-                nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=3, dilation=2, padding=2),
-                norm_generator(encoder_channels[0]),
-                act_generator(),
-                nn.Dropout2d(dropout_rate),
-                nn.Conv2d(encoder_channels[0], encoder_channels[0], kernel_size=(16, 1), stride=(16, 1)),
-                nn.ReLU(),
-                nn.Dropout2d(dropout_rate)
+                nn.AdaptiveAvgPool2d((self.input_size, self.input_size)),
+                nn.Conv2d(2, 64, kernel_size=3, dilation=2, padding=2), 
+                norm_generator(64),
+                act_generator()
             )
         ]
         
@@ -137,11 +116,7 @@ class SegNet_3Head(nn.Module):
 
         self.decoder = nn.Sequential(*decoder)
 
-        self.heads = [nn.Sequential(
-            nn.ConvTranspose2d(decoder_channels[-1], decoder_channels[-1], kernel_size=2, stride=2),
-            norm_generator(decoder_channels[-1]),
-            act_generator(),
-            nn.Dropout2d(dropout_rate),
+        self.head_lambda = nn.Sequential(
             nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
             norm_generator(decoder_channels[-1]),
             act_generator(),
@@ -151,15 +126,44 @@ class SegNet_3Head(nn.Module):
             act_generator(),
             nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
             nn.Sigmoid()
-        ) for _ in range(3)]
-        
+        )
+
+        self.head_mu = nn.Sequential(
+            nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
+            nn.Dropout2d(dropout_rate),
+            nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
+            nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+        self.head_rho = nn.Sequential(
+            nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
+            nn.Dropout2d(dropout_rate),
+            nn.Conv2d(decoder_channels[-1], decoder_channels[-1], kernel_size=3, dilation=2, padding=2),
+            norm_generator(decoder_channels[-1]),
+            act_generator(),
+            nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
+            nn.Sigmoid()
+        )
     
     def forward(self, x):
 
-        x = self.decoder(self.encoder(x.unsqueeze(dim=1)))
+        # TODO: check whether we require asserts, or 
+        # resize via avg. pooling is good enough to use
+        # assert h // 8 > 0
+        # assert w // 8 > 0
 
-        out0 = self.heads[0](x).view(-1, 128, 128)
-        out1 = self.heads[1](x).view(-1, 128, 128)
-        out2 = self.heads[2](x).view(-1, 128, 128)
+        x = self.encoder(x)
+        x = self.decoder(x)
 
-        return out0, out1, out2
+        lmbda = self.head_lambda(x).view(-1, self.input_size, self.input_size)
+        mu    = self.head_mu(x).view(-1, self.input_size, self.input_size)
+        rho   = self.head_rho(x).view(-1, self.input_size, self.input_size)
+
+        return lmbda, mu, rho

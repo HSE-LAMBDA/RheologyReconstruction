@@ -126,6 +126,57 @@ class ConstantLoad(UserExpression):
 		values[1] = normal[1] * factor * in_radius
 
 		
-		
 	def value_shape(self): return (2, )
 
+
+class AdjointLoad(UserExpression):
+	"""
+	A custom expression to implement adjoint load,
+	which emerges in derivation of Lagrange function stationarity
+
+	"""
+
+	@staticmethod
+	def delta(x, p, scale, magnitude):
+		r = (x[0] - p[0]) ** 2 + (x[1] - p[1]) ** 2
+		factor = np.sqrt(1 / np.pi / scale) * np.exp(-r / scale)
+
+		return magnitude * factor
+
+	def __init__(self, mesh, t, integration_time, magnitudes, detector_coords, **kwargs):
+
+		super().__init__(**kwargs)
+
+		self.mesh = mesh
+		self.t    = t
+		self.integration_time = integration_time
+		self.detector_coords  = detector_coords
+
+		self.magnitudes = magnitudes
+
+		self.dt  = self.integration_time / float(len(magnitudes))
+
+		#stretch factor, maybe should be fine-tuned, idk
+		self.a   = 10.
+
+	def eval(self, values, x): # cell):
+
+		i = min(len(self.magnitudes) - 1, m.floor(self.t / self.dt))
+
+		#normal = 0.0
+		#cell = Cell(self.mesh, cell.index)
+		
+		#for f in facets(cell): 
+		#	if f.exterior(): normal = f.normal()
+		#if isinstance(normal, float): normal = (0., 1.)
+
+		total_magnitude = np.zeros(2)
+
+		for j, p in enumerate(self.detector_coords):
+			total_magnitude += self.delta(x, p, self.a, self.magnitudes[i, j])
+
+		values[0] = total_magnitude[0]
+		values[1] = total_magnitude[1]
+
+
+	def value_shape(self): return (2, )

@@ -18,7 +18,7 @@ class boundary_x(SubDomain):
 		self.tol = 1e-14
 
 	def inside(self, x, on_boundary): 
-		return on_boundary and near(x[0], self.loc, self.tol)
+		return near(x[0], self.loc, self.tol)
 
 class boundary_y(SubDomain):
 	"""
@@ -36,7 +36,7 @@ class boundary_y(SubDomain):
 
 
 	def inside(self, x, on_boundary): 
-		return on_boundary and near(x[1], self.loc, self.tol)
+		return near(x[1], self.loc, self.tol)
 
 
 

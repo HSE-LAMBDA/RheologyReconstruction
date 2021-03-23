@@ -1,5 +1,3 @@
-#package 
-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -7,15 +5,25 @@ import os
 import time 
 import torch.nn.functional as F
 import torch.optim as optim
+import subprocess
 
 from datetime import datetime
 from dataset import SeismogramBatch
-from tqdm.notebook import tqdm
 from utils import get_latest_snapshot_name, make_snapshot_directory
 from neural_networks.loss import weightedBCELoss
 from IPython.display import clear_output
-from dolfin_adjoint.adjoint_solver import adjoint_solver
+from dolfin_adjoint.elasticity_solver import dolfin_adjoint_solver, adjoint_equation_solver
+from utils import isnotebook
 
+__running_on_notebook__ = isnotebook()
+
+if __running_on_notebook__: 
+    from tqdm import tqdm
+else:
+    from tqdm.notebook import tqdm
+
+
+import matplotlib.pyplot as plt
 
 
 class BaseTrainer:
@@ -172,7 +180,16 @@ class BaseTrainer:
         return m_values
 
 
-    def train(self, batch_size=32, epochs=100, from_zero=True):      
+    def train(
+        self, 
+        detector_coordinates,
+        batch_size=32, 
+        epochs=100, 
+        from_zero=True, 
+        num_solver_type='adjoint_equation'
+    ):
+
+        assert num_solver_type in {'dolfin_adjoint', 'adjoint_equation'}, "Unknown solver type"      
 
         self.model = self.model.to(self.device)
         if not from_zero: self.load_latest_snapshot()
@@ -186,28 +203,30 @@ class BaseTrainer:
 
        	step = 1
 
+        def save(
+            timestep, 
+            curr_time,
+            u_field, 
+            v_field, 
+            a_field
+        ):
+    
+            res_u_file << u_field
+            res_v_file << v_field
+
 
         for current_epoch in tqdm(range(epochs), desc=f'Running training procedure'):
 
             self.model.train(True)
 
-            for batch in tqdm(train_batch_gen, desc=f'Epoch {current_epoch + 1} of {epochs}'): 
+            for batch in tqdm(train_batch_gen, desc=f'Epoch {current_epoch + 1} of {epochs}'):
+
 
                 self.model.zero_grad()
                 self.optimizer.zero_grad()
 
                 batch  = batch.to(self.device)
                 preds  = self.model.forward(batch.seismograms)
-
-                """
-                Предсказания сети необходимо 
-                1) Перенести на неравноменую сетку
-                2) Загрузить эту сетку в fenics
-                3) С его помощью посчитать градиент от функционала ошибки по выходу сети
-                4) Применить chain rule
-        		"""
-
-                #TODO: implement
 
                 L = []
 
@@ -218,26 +237,55 @@ class BaseTrainer:
                     preds_mu     = preds_mu.cpu().detach().data.numpy()
                     preds_rho    = preds_rho.cpu().detach().data.numpy()
 
+                    # TODO: add visualization callback
+                    #fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+                    #axes[0].imshow(preds_lambda)
+                    #axes[0].set_title('preds')
+                    #axes[1].imshow(batch.masks.cpu().data.numpy()[0])
+                    #axes[1].set_title('ground truth')
+                    #plt.show()
+
                     seismo = batch.seismograms[i].cpu().detach().numpy()
 
-                    adj_solver = adjoint_solver(preds_lambda, preds_mu, preds_rho, seismo)
-                    j, grad_lambda, grad_mu, grad_rho = adj_solver.backward()
+                    
+                    if num_solver_type == 'adjoint_equation':
+                        adj_solver = adjoint_equation_solver(
+                            preds_lambda, preds_mu, np.ones_like(preds_lambda), 
+                            detector_coordinates
+                        )
+                    else:
+                        adj_solver = dolfin_adjoint_solver(
+                            preds_lambda, preds_mu, np.ones_like(preds_lambda), 
+                            detector_coordinates
+                        )
 
-                    print(j)
+                    j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo)
+
+                    #fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+                    #axes[0].imshow(grad_lambda)
+                    #axes[0].set_title('lambda')
+                    #axes[1].imshow(grad_mu)
+                    #axes[1].set_title('mu')
+                    #plt.show()
+                               
 
                     preds[0][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
-                    preds[1][i].backward(torch.from_numpy(grad_rho), retain_graph=True)
-                    preds[2][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
+                    preds[1][i].backward(torch.from_numpy(grad_mu), retain_graph=True)
+                    preds[2][i].backward(torch.from_numpy(grad_rho), retain_graph=True)
 
                     L.append(j)
+        
 
+                L = np.mean(np.array(L))
 
                 self.optimizer.step()
                 torch.cuda.empty_cache()
 
                 step += 1
 
-                if self.logger is not None: self.logger.log(self, step, np.mean(np.array(L)))
+                print(L)
+
+                if self.logger is not None: self.logger.log(self, step, L)
                 if step % self.snapshot_interval == 0 : self.save_model()
 
-            clear_output(wait=True)
+            #clear_output(wait=True)

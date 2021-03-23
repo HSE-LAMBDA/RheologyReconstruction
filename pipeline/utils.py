@@ -52,3 +52,23 @@ def number_of_parameters(model: nn.Module) -> int:
     print("Total number of parameters: {}".format(total))
     print("Trainable number of parameters: {}".format(trainable))
 
+
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
+
+__running_on_notebook__ = isnotebook()
+
+if __running_on_notebook__: 
+    from tqdm import tqdm as tqdm
+else:
+    from tqdm.notebook import tqdm as tqdm

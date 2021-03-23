@@ -56,7 +56,7 @@ class NormFactory():
 
 class ActivationFactory():
 
-    def __init__(self): self.keys = ['ReLU', 'LeakyReLU', 'Tanh']
+    def __init__(self): self.keys = ['ReLU', 'LeakyReLU', 'Tanh', 'CELU']
 
     def __call__(self, name, *args, **kwargs):
 
@@ -67,6 +67,7 @@ class ActivationFactory():
         if name == 'ReLU': return nn.ReLU(*args, **kwargs)
         if name == 'LeakyReLU'   : return nn.LeakyReLU(*args, **kwargs)
         if name == 'Tanh': return nn.Tanh(*args, **kwargs)
+        if name == 'CELU': return nn.CELU(*args, **kwargs)
 
 
 
