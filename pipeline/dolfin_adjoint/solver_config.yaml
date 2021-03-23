@@ -4,19 +4,19 @@
     bounding_box: # points to form integration area
       p1: [0.0, 0.0]
       p2: [2000., 2000.]
-    nx: 25
-    ny: 25
+    nx: 20
+    ny: 20
 
   physics: # scale and factor for each rheological parameters
       lambda:
         scale_lambda : 1.0e+10
-        factor_lambda: 1.0e+9
+        factor_lambda: 8.0e+9
       mu:
-        scale_mu: 1.0e+9
-        factor_mu: 1.0e+8
+        scale_mu: 7.0e+9
+        factor_mu: 5.0e+9
       rho:
         scale_rho: 1.0e+3
-        factor_rho: 1.0e+2
+        factor_rho: 1.0e+3
 
   task:
     target_time: 4.0
@@ -30,7 +30,7 @@
   method:
     polynomial_type: CG
     polynomial_order: 2
-    time_steps: 100
+    time_steps: 200
     alphas: # two constants for generalized alpha-timestepping
       alpha_f: 0.
       alpha_m: 0.

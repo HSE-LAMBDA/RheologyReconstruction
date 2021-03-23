@@ -22,7 +22,6 @@ if __running_on_notebook__:
 else:
     from tqdm.notebook import tqdm
 
-
 import matplotlib.pyplot as plt
 
 
