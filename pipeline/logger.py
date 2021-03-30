@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 
-from utils import create_nonexistent_directory
+from utils import check_if_dir_exists
 
 
 class GenericLogger:
@@ -102,15 +102,92 @@ class GenericLogger:
             plt.close()       
         
        
-    def log(self, trainer, current_step, loss, training_disc):
+    def log(self, trainer, current_step, loss):
 
-        self.g_loss_accum.append(loss)
+        self.loss_accum.append(loss)
         
         if current_step % self.log_interval == 0:
             self.log_metrics('loss', np.mean(np.array(self.loss_accum)))
             self.loss_accum  = []
+
+        print(current_step)
            
         if current_step % self.val_interval == 0:
             
             val_metrics = trainer.validate(self.metrics)
             for name, value in val_metrics.items(): self.log_metrics(name, value)
+
+
+class CometMlLogger():
+
+    def __init__(
+            self,
+            experiment,
+            log_interval=50,
+            val_interval=200,
+            metrics=None,
+            visualize=None,
+        ):
+
+        """
+        A logger that logs metrics into CometML project. 
+        :param experiment: a CometML experiment
+        :param log_interval: 
+            Interval between logging, measured in batches
+        :type log_interval : int
+
+        :param val_interval: 
+            Interval between validation, measured in batches
+        :type log_interval : int
+
+        :param metrics (default=None): 
+            List of different metrics to log 
+        :type metrics: 
+            List of :class:`BaseMetric` or None 
+        """
+
+        self.experiment   = experiment
+        self.log_interval = log_interval
+        self.val_interval = val_interval
+              
+        # array to accumulate loss function values
+
+        self.loss_accum = []
+        self.metrics = metrics if metrics is not None else []
+        
+        # map to store history of all metrics and losses    
+        self.metrics_history = dict()
+        self.visualize = visualize
+
+    def log_metric(self, name, value, step, test=True):
+
+        if name not in self.metrics_history: 
+            self.metrics_history[name] = [value]
+        else:
+            self.metrics_history[name].append(value)
+
+        if test: 
+            self.experiment.test()
+        else:
+            self.experiment.train()
+
+        self.experiment.log_metric(name, value, step)       
+        
+       
+    def log(self, trainer, current_step, loss):
+
+        self.loss_accum.append(loss)
+        
+        if current_step % self.log_interval == 0:
+            self.log_metric('loss', np.mean(np.array(self.loss_accum)), current_step, test=False)
+            self.loss_accum  = []
+           
+        if current_step % self.val_interval == 0:
+            val_metrics, visualization = trainer.validate(self.metrics, visualize=self.visualize)
+            
+            for name, value in val_metrics.items(): 
+                self.log_metric(name, value, current_step)
+
+            if visualization is not None: self.experiment.log_figure(visualization)
+
+

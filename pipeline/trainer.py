@@ -116,7 +116,7 @@ class BaseTrainer:
             torch.save(states, os.path.join(self.snapshot_path, time_string + '.pth'))
 
 
-    def validate(self, metrics_list):
+    def validate(self, metrics_list, visualize):
         """
         Evaluate the list of given metrics with data.
         If validational dataset not is specified, evaluation will run on the single batch from
@@ -128,37 +128,33 @@ class BaseTrainer:
 
         self.model.train(False)
 
+        # TODO: smarter batch size settings
         batch_size = 64
 
         if self.val_dataset is None:
 
             batch_gen = torch.utils.data.DataLoader(
                 self.train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
-                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
-            )
-
+                num_workers=2, collate_fn=lambda x: SeismogramBatch(x))
+        
         else:
             batch_gen = torch.utils.data.DataLoader(
                 self.val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
-                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
-            )
+                num_workers=2, collate_fn=lambda x: SeismogramBatch(x))
 
 
         m_values = {m.name: [] for m in metrics_list}
+        visualization = None
 
         with torch.no_grad():
 
             if self.val_dataset is None:
             
                 val_batch = next(iter(batch_gen)).to(self.device)
-                preds = self.model.forward(val_batch)
+                preds     = self.model.forward(val_batch.seismograms)
+                for m in metrics_list: m_values[m.name].append(m(val_batch, preds))
 
-                for m in metrics_list:
-                    m_values[m.name].append(m(
-                        preds.cpu().data.numpy(),
-                        val_batch.masks.cpu().data.numpy(),
-                        val_batch.weights.cpu().data.numpy()
-                    ))
+                if visualize is not None: visualization = visualize(val_batch, preds)
 
             else:
             	
@@ -167,16 +163,10 @@ class BaseTrainer:
                     val_batch = val_batch.to(self.device)
                     preds = self.model.forward(val_batch)
 
-                    for m in metrics_list:
-                        m_values[m.name].append(m(
-                            preds.cpu().data.numpy(),
-                            val_batch.masks.cpu().data.numpy(),
-                            val_batch.weights.cpu().data.numpy()
-                        ))
+                    for m in metrics_list: m_values[m.name].append(m(val_batch, preds))
 
         for k in m_values.keys(): m_values[k] = np.mean(np.array(m_values[k]))
-
-        return m_values
+        return m_values, visualization
 
 
     def train(
@@ -236,16 +226,8 @@ class BaseTrainer:
                     preds_mu     = preds_mu.cpu().detach().data.numpy()
                     preds_rho    = preds_rho.cpu().detach().data.numpy()
 
-                    # TODO: add visualization callback
-                    #fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                    #axes[0].imshow(preds_lambda)
-                    #axes[0].set_title('preds')
-                    #axes[1].imshow(batch.masks.cpu().data.numpy()[0])
-                    #axes[1].set_title('ground truth')
-                    #plt.show()
-
+                
                     seismo = batch.seismograms[i].cpu().detach().numpy()
-
                     
                     if num_solver_type == 'adjoint_equation':
                         adj_solver = adjoint_equation_solver(
@@ -259,18 +241,11 @@ class BaseTrainer:
                         )
 
                     j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo)
-
-                    #fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                    #axes[0].imshow(grad_lambda)
-                    #axes[0].set_title('lambda')
-                    #axes[1].imshow(grad_mu)
-                    #axes[1].set_title('mu')
-                    #plt.show()
                                
 
-                    preds[0][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
-                    preds[1][i].backward(torch.from_numpy(grad_mu), retain_graph=True)
-                    preds[2][i].backward(torch.from_numpy(grad_rho), retain_graph=True)
+                    preds[0][i].backward(torch.from_numpy(grad_lambda).to(self.device), retain_graph=True)
+                    preds[1][i].backward(torch.from_numpy(grad_mu).to(self.device), retain_graph=True)
+                    preds[2][i].backward(torch.from_numpy(grad_rho).to(self.device), retain_graph=True)
 
                     L.append(j)
         
@@ -282,9 +257,5 @@ class BaseTrainer:
 
                 step += 1
 
-                print(L)
-
                 if self.logger is not None: self.logger.log(self, step, L)
                 if step % self.snapshot_interval == 0 : self.save_model()
-
-            #clear_output(wait=True)

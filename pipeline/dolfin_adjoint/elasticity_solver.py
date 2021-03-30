@@ -870,7 +870,7 @@ class adjoint_equation_solver(elasticity_solver):
             reduce(
                 lambda x, y: x + y,
                 [
-                    inner(t, div(self.sigma(a))) * self.dt 
+                    -inner(t, div(self.sigma(a))) * self.dt 
                     for t, a in zip(disp_history, adjoint_history)
                 ] 
             ),
