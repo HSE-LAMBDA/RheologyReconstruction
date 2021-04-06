@@ -166,6 +166,8 @@ class elasticity_solver():
         values_rho, 
         config_file='dolfin_adjoint/solver_config.yaml'):
 
+        set_working_tape(Tape()) # TODO: check if works ok with multiple solvers
+
         with open(config_file, 'r') as f: config = yaml.load(f, Loader=Loader)
         validator = yaml.load(__validation_schema__, Loader=Loader)
 
