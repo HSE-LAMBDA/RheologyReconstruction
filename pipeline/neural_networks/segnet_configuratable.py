@@ -6,6 +6,7 @@ from .func_utils import constant
 from functools import partial
 from collections import OrderedDict
 
+import yaml
 
 
 class SegNet_3Head_conf(nn.Module):
