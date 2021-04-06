@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 
 
-class SegNet_3Head(nn.Module):
+class SegNet_3Head_conf(nn.Module):
 
     """
     See https://arxiv.org/abs/1511.00561 for base article
