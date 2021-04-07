@@ -231,12 +231,12 @@ class BaseTrainer:
                     
                     if num_solver_type == 'adjoint_equation':
                         adj_solver = adjoint_equation_solver(
-                            preds_lambda, preds_mu, np.ones_like(preds_lambda), 
+                            preds_lambda, preds_mu, preds_rho, 
                             detector_coordinates
                         )
                     else:
                         adj_solver = dolfin_adjoint_solver(
-                            preds_lambda, preds_mu, np.ones_like(preds_lambda), 
+                            preds_lambda, preds_mu, preds_rho, 
                             detector_coordinates
                         )
 
