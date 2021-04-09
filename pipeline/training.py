@@ -6,6 +6,7 @@ import os
 from dataset import SeismogramDataset
 from neural_networks.segnet import SegNet_3Head
 from trainer import BaseTrainer
+from loggers import TensorboardLogger
 
 SEED = 0
 
@@ -17,22 +18,25 @@ def main():
     torch.cuda.manual_seed(SEED)
     torch.backends.cudnn.deterministic = True
 
-    # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    device = 'cpu'
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # device = 'cpu'
     ROOT_DIR = os.path.join(os.getcwd())
     dataset_path = os.path.join(ROOT_DIR, 'dolfin_adjoint', '2_subdomains')
     train_dataset = SeismogramDataset(dataset_path)
     model = SegNet_3Head()
-    detector_coords = [(np.array([c, 2000.])) for c in np.linspace(0., 2000., 128)]  # TODO: research
+    # detector_coords = [(np.array([c, 2000.])) for c in np.linspace(0., 2000., 128)]  # TODO: research
+    detector_coords = [(np.array([c, 20.])) for c in np.linspace(0., 20., 128)]  # TODO: research
+    logger = TensorboardLogger()
 
     # TODO: test with nonempty logger
     t = BaseTrainer(
-        model,
-        device,
-        train_dataset,
+        model=model,
+        device=device,
+        train_dataset=train_dataset,
         optimizer_type=torch.optim.Adam,
         optimizer_params={'lr': 1e-3},
-        snapshot_interval=250
+        snapshot_interval=250,
+        logger=logger,
     )
 
     # TODO: test if everything is allright with batch_size > 1
