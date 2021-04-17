@@ -18,12 +18,12 @@ from utils import isnotebook
 __running_on_notebook__ = isnotebook()
 
 if __running_on_notebook__: 
-    from tqdm import tqdm
-else:
     from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
 
 import matplotlib.pyplot as plt
-
+from fenics import File
 
 class BaseTrainer:
 
@@ -185,12 +185,15 @@ class BaseTrainer:
 
         train_batch_gen = torch.utils.data.DataLoader(
             self.train_dataset, batch_size=batch_size, 
-            shuffle=True, pin_memory=True, num_workers=5,
+            shuffle=True, pin_memory=True, num_workers=2,
             collate_fn=lambda x: SeismogramBatch(x)
         )
 
 
        	step = 1
+
+        res_u_file = File("test/elastodynamics-u.pvd")
+        res_s_file = File("test/elastodynamics-s.pvd")
 
         def save(
             timestep, 
@@ -199,9 +202,11 @@ class BaseTrainer:
             v_field, 
             a_field
         ):
-    
+          
             res_u_file << u_field
-            res_v_file << v_field
+            # Compute stresses and save them
+            #adj_solver.local_project(adj_solver.sigma(u_field), Vsig, sig)
+            #res_s_file << sig
 
 
         for current_epoch in tqdm(range(epochs), desc=f'Running training procedure'):
@@ -240,8 +245,10 @@ class BaseTrainer:
                             detector_coordinates
                         )
 
-                    j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo)
-                               
+                    j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo, save_callback=save)
+
+                    plt.imshow(grad_rho)
+                    plt.show()
 
                     preds[0][i].backward(torch.from_numpy(grad_lambda).to(self.device), retain_graph=True)
                     preds[1][i].backward(torch.from_numpy(grad_mu).to(self.device), retain_graph=True)

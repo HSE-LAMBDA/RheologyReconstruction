@@ -4,6 +4,8 @@ sys.path.append('..')
 import numpy as np
 import yaml
 import pprint
+import matplotlib.pyplot as plt
+import pprint
 
 from functools import reduce
 from yaml import Loader
@@ -16,10 +18,11 @@ from utils import isnotebook
 
 __running_on_notebook__ = isnotebook()
 
-if __running_on_notebook__: 
-    from tqdm import tqdm
-else:
+if __running_on_notebook__:
     from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
+    
 
 from fenics_adjoint import *
 
@@ -27,77 +30,140 @@ from fenics_adjoint import *
 __validation_schema__ = """
 type: object
 properties:
+
   mesh:
     type: object
     properties:
+      
+      mesh_type:
+        description: "Mesh type for numerical solver"
+        type: string
+        enum: ['custom', 'regular']
+        default: 'regular'
+
       bounding_box:
+        description: "Region of interest for rheology reconstruction"
         type: object
         properties:
+          
           p1:
             type: array
             items:
               type: number
             minItems: 2 
             maxItems: 2
+          
           p2:
             type: array
             items:
               type: number
             minItems: 2 
             maxItems: 2
+        
         required: [p1, p2]
-      nx: 
-        type: integer
-        exclusiveMinimum: 1
-      ny:
-        type: integer
-        exclusiveMinimum: 1
-    required: [bounding_box, nx, ny]
 
-  physics:
+    if:
+      properties:
+        mesh_type:
+          enum: ['regular']
+    then:
+      properties:
+        nx: 
+          type: integer
+          exclusiveMinimum: 1
+        ny:
+          type: integer
+          exclusiveMinimum: 1
+      required: [mesh_type]
+    else:   
+      properties:
+        filename: 
+          type: string
+      required: [mesh_type]
+
+  detectors:
+    description: 'Detector layout information'
     type: object
     properties:
+      
+      layout_type:
+        description: "Layout type"
+        type: string
+        enum: ['uniform', 'custom']
+        default: 'uniform'
+    
+    if:
+      properties:
+        layout_type:
+          const: 'uniform'
+    then:
+      properties:
+        number_of_detectors: 
+          type: integer
+          exclusiveMinimum: 1
+          
+        location:
+          type: string
+          enum: ['top', 'bottom', 'left', 'right']
+            
+      required: [layout_type]    
+
+    else:
+      properties:
+        filename: 
+          type: string
+
+      required: [layout_type]
+
+  physics:
+    description: 'Prior assumptions about rheology parameters'
+    type: object
+    properties:
+      
       lambda:
         type: object
         properties:
           scale_lambda: 
             type: number
-            #minimum: '0.0'
           factor_lambda: 
             type: number
-            #minimum: '0.0'
         required: [scale_lambda, factor_lambda]
+
       mu:
         type: object
         properties:
           scale_mu: 
             type: number
-            #minimum: '0.0'
           factor_mu: 
             type: number
-            #minimum: '0.0'
         required: [scale_mu, factor_mu]
+
       rho:
         type: object
         properties:
           scale_rho:
             type: number
-            #minimum: '0.0'
           factor_rho:
             type: number
-            #minimum: '0.0'
         required: [scale_rho, factor_rho]
+
     required: [lambda, mu, rho] 
 
   task:
+    description: "Integration task description"
     type: object
     properties:
+      
       target_time: 
         type: number
-        #minimum: '0.0'
+      
       source:
         type: object
         properties:
+          source_type:
+            type: string
+            enum: ['sine', 'gaussian', 'constant']
+            default: 'gaussian'
           location: 
             type: string
             enum: [
@@ -114,13 +180,48 @@ properties:
             maxItems: 2 
           radius: 
             type: number
-            #minimum: '0.0'
           magnitude: 
             type: number
-            #minimum: '0.0'
           cutoff_time:
             type: number
-        required: [location, center, radius, magnitude, cutoff_time] 
+
+        required: [
+          source_type,
+          location, 
+          center, 
+          radius, 
+          magnitude, 
+          cutoff_time
+        ]
+
+        if:
+          properties:
+            source_type:
+              const: 'gaussian'
+        then:
+          properties:
+            period: 
+              description: 'Period of sine oscillations'
+              type: number
+            mu:
+              description: 'Expectation of source in time'
+              type: number
+            sigma:
+              description: 'Dispersion of source in time'
+              type: number
+          required: [source_type]
+        
+        if:
+          properties:
+            source_type:
+              const: 'sine'
+        then:
+          properties:
+            period:
+              description: 'Period of sine oscillations'
+              type: number
+          required: [source_type]
+    
     required: [target_time, source]
 
   method:
@@ -152,7 +253,8 @@ properties:
           'petsc'
         ]
     required: [polynomial_type, polynomial_order, time_steps, alphas]
-required: [mesh, physics, task, method]
+
+required: [mesh, detectors, physics, task, method]
 """
 
 
@@ -170,19 +272,85 @@ class elasticity_solver():
 
         with open(config_file, 'r') as f: config = yaml.load(f, Loader=Loader)
         validator = yaml.load(__validation_schema__, Loader=Loader)
-
+        pprint.pprint(validator)
         validate(config, validator)
 
-
         # mesh parameters
+
+        self.mesh_type = config['mesh']['mesh_type']
+
         self.bounding_box = [
             config['mesh']['bounding_box']['p1'],
             config['mesh']['bounding_box']['p2']
         ]
 
-        self.nx = config['mesh']['nx']
-        self.ny = config['mesh']['ny']
-     
+        if self.mesh_type == 'regular':
+
+            self.nx = config['mesh']['nx']
+            self.ny = config['mesh']['ny']
+
+            self.mesh = RectangleMesh(
+                Point(self.bounding_box[0]),
+                Point(self.bounding_box[1]), 
+                self.nx,
+                self.ny
+            )
+
+        if self.mesh_type == 'custom':
+            self.mesh = Mesh(config['mesh']['filename'])
+
+        # detector_coords
+
+        self.detector_layout_type = config['detectors']['layout_type']
+        
+        if self.detector_layout_type == 'uniform':
+
+            if config['detectors']['location'] == 'top':
+            
+                coord_space = np.linspace(
+                    self.bounding_box[0][0], 
+                    self.bounding_box[1][0],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([c, self.bounding_box[1][1]]) for c in coord_space)
+                ] 
+
+            if config['detectors']['location'] == 'bottom':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][0], 
+                    self.bounding_box[1][0],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([c, self.bounding_box[0][1]]) for c in coord_space)
+                ]
+
+            if config['detectors']['location'] == 'right':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][1], 
+                    self.bounding_box[1][1],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([self.bounding_box[1][0], c]) for c in coord_space)
+                ]                
+
+            if config['detectors']['location'] == 'left':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][1], 
+                    self.bounding_box[1][1],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([self.bounding_box[0][0], c]) for c in coord_space)
+                ]                
+
+        if self.detector_layout_type == 'custom': raise NotImplementedError
+
         # physics
         self.scale_lambda  = config['physics']['lambda']['scale_lambda']
         self.factor_lambda = config['physics']['lambda']['factor_lambda']
@@ -198,6 +366,27 @@ class elasticity_solver():
         self.source_radius    = config['task']['source']['radius']
         self.source_magnitude = config['task']['source']['magnitude']
         self.cutoff_time      = config['task']['source']['cutoff_time']
+        self.source_type      = config['task']['source']['source_type']
+
+        if self.source_type == 'gaussian':
+
+            period = config['task']['source']['period']
+            mu     = config['task']['source']['mu']
+            sigma  = config['task']['source']['sigma']
+
+            self.source = GaussianLoad(
+                self.mesh, 0., self.cutoff_time, self.source_magnitude,
+                self.source_center, self.source_radius,
+                period, mu, sigma
+            )
+
+        if self.source_type == 'sine':
+
+            period = config['task']['source']['period']
+            self.source = SineLoad(
+                self.mesh, 0., self.cutoff_time, self.source_magnitude,
+                self.source_center, self.source_radius, period 
+            )
 
         # method
         self.poly_type  = config['method']['polynomial_type']
@@ -229,22 +418,24 @@ class elasticity_solver():
         self.gamma   = Constant(0.5 + self.alpha_f - self.alpha_m)
         self.beta    = Constant((self.gamma + 0.5) ** 2 / 4.)
 
-        # rectangular mesh
-        self.mesh = RectangleMesh(
-            Point(self.bounding_box[0]),
-            Point(self.bounding_box[1]), 
-            self.nx,
-            self.ny
-        )
-    
+        
         self.V = VectorFunctionSpace(self.mesh, self.poly_type, self.poly_order) # base function space
         self.control_space = FunctionSpace(self.mesh, self.poly_type, self.poly_order) # control space
 
         # create boundary subdomains
         top   = boundary_y(self.bounding_box[1][1])
-        bot   = boundary_y(self.bounding_box[0][1])
-        left  = boundary_x(self.bounding_box[0][0])
-        right = boundary_x(self.bounding_box[1][0])
+        bot   = boundary_y(
+            self.bounding_box[0][1] -\
+            (self.bounding_box[1][1] - self.bounding_box[0][1])
+        )
+        left  = boundary_x(
+            self.bounding_box[0][0] -\
+            (self.bounding_box[1][0] - self.bounding_box[0][0])
+        )
+        right = boundary_x(
+            self.bounding_box[1][0] +\
+            (self.bounding_box[1][0] - self.bounding_box[0][0])
+        )
 
         self.boundaries = MeshFunction("size_t", self.mesh, self.mesh.topology().dim() - 1)
 
@@ -274,7 +465,6 @@ class elasticity_solver():
             interpolant(self.bounding_box, self.values_mu), self.control_space)
         self.rho   = interpolate(
             interpolant(self.bounding_box, self.values_rho), self.control_space)
-
 
         self.dss = ds(subdomain_data=self.boundaries)
            
@@ -390,36 +580,36 @@ class elasticity_solver():
         dx_l = (p2[0] - p1[0]) / float(sl[0])
         dy_l = (p2[1] - p1[1]) / float(sl[1])
 
-        lmbda_xx, lmbda_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_l / 2. , p2[0] - dx_l / 2., sl[0]),
-            np.linspace(p1[1] + dy_l / 2. , p2[1] - dy_l / 2., sl[1]),
-        )
+        arr_lambda = []
 
-        arr_lambda = [grads[0](x, y) for x, y in zip(lmbda_xx.flatten(), lmbda_yy.flatten())]
+        for x in np.linspace(p1[0] + dx_l / 2. , p2[0] - dx_l / 2., sl[0]):
+            for y in np.linspace(p1[1] + dy_l / 2. , p2[1] - dy_l / 2., sl[1]):
+                arr_lambda.append(grads[0](x, y))
+
         arr_lambda = np.array(arr_lambda).reshape(*sl)
 
         sm = self.values_mu.shape
         dx_m = (p2[0] - p1[0]) / float(sm[0])
         dy_m = (p2[1] - p1[1]) / float(sm[1])
 
-        mu_xx, mu_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_m / 2. , p2[0] - dx_m / 2., sl[0]),
-            np.linspace(p1[1] + dy_m / 2. , p2[1] - dy_m / 2., sl[1]),
-        )
+        arr_mu = []
 
-        arr_mu = [grads[1](x, y) for x, y in zip(mu_xx.flatten(), mu_yy.flatten())]
+        for x in np.linspace(p1[0] + dx_m / 2. , p2[0] - dx_m / 2., sl[0]):
+            for y in np.linspace(p1[1] + dy_m / 2. , p2[1] - dy_m / 2., sl[1]):
+                arr_mu.append(grads[1](x, y))
+
         arr_mu = np.array(arr_mu).reshape(*sm)
 
         sr = self.values_rho.shape
         dx_r = (p2[0] - p1[0]) / float(sr[0])
         dy_r = (p2[1] - p1[1]) / float(sr[1])
 
-        rho_xx, rho_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_r / 2. , p2[0] - dx_r / 2., sl[0]),
-            np.linspace(p1[1] + dy_r / 2. , p2[1] - dy_r / 2., sl[1]),
-        )
+        arr_rho = []
 
-        arr_rho = [grads[2](x, y) for x, y in zip(rho_xx.flatten(), rho_yy.flatten())]
+        for x in np.linspace(p1[0] + dx_r / 2. , p2[0] - dx_r / 2., sl[0]):
+            for y in np.linspace(p1[1] + dy_r / 2. , p2[1] - dy_r / 2., sl[1]):
+                arr_rho.append(grads[2](x, y))
+
         arr_rho = np.array(arr_rho).reshape(*sr)
 
         return arr_lambda, arr_mu, arr_rho
@@ -431,10 +621,7 @@ class elasticity_solver():
     ):
 
         # init constant load
-        p = ConstantLoad(
-            self.mesh, 0., self.cutoff_time, self.source_magnitude,
-            self.source_center, self.source_radius
-        )
+       
 
        
         du = TrialFunction(self.V)
@@ -445,13 +632,14 @@ class elasticity_solver():
         v_old = Function(self.V)
         a_old = Function(self.V)
 
+
         a_new = self._update_a(du, u_old, v_old, a_old, ufl=True)
         v_new = self._update_v(a_new, u_old, v_old, a_old, ufl=True)
     
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) +\
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) +\
               self.k(self.avg(u_old, du, self.alpha_f), u_) -\
-              self.Wext(u_, p, self.dss)
+              self.Wext(u_, self.source, self.dss)
     
         a_form = lhs(res)
         L_form = rhs(res)
@@ -565,12 +753,6 @@ class dolfin_adjoint_solver(elasticity_solver):
     
         assert(seismogram.shape[1] == self.time_steps)
         assert(seismogram.shape[2] == len(self.detector_coords))
-
-        # init constant load
-        p = ConstantLoad(
-            self.mesh, 0., self.cutoff_time, self.source_magnitude,
-            self.source_center, self.source_radius
-        )
  
         # assemble bilinear and linear ufl forms
         du = TrialFunction(self.V)
@@ -587,7 +769,7 @@ class dolfin_adjoint_solver(elasticity_solver):
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) +\
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) +\
               self.k(self.avg(u_old, du, self.alpha_f), u_) -\
-              self.Wext(u_, p, self.dss)
+              self.Wext(u_, self.source, self.dss)
     
         a_form = lhs(res)
         L_form = rhs(res)
@@ -624,10 +806,29 @@ class dolfin_adjoint_solver(elasticity_solver):
                 j += 0.5 * ((float(b[0]) - a[0]) ** 2 + (float(b[1]) - a[1]) ** 2)
 
 
-        controls = [Control(self.lmbda), Control(self.mu), Control(self.rho)]
-        rf       = ReducedFunctional(j, controls)
+        def eval_cb(j, m):
+            """ The callback function keeping a log """
+            print("objective = %15.10e " % j)
 
-        return float(j), rf
+        eps      = Constant(1e-4)
+        R_mu     = Constant(1e-7)
+        R_lambda = Constant(1e-7)
+
+        
+        reg = assemble(
+            R_lambda * (inner(grad(self.lmbda), grad(self.lmbda)) + eps) * dx +\
+            R_mu * (inner(grad(self.mu), grad(self.mu)) + eps) * dx
+        )
+
+        print(reg)
+        print(j)
+
+        j += reg
+
+        controls = [Control(self.lmbda), Control(self.mu), Control(self.rho)]
+        rf       = ReducedFunctional(j, controls, eval_cb_post=eval_cb)
+       
+        return float(j), rf 
 
     def backward(
         self,
@@ -640,9 +841,9 @@ class dolfin_adjoint_solver(elasticity_solver):
         grad_lambda, grad_mu, grad_rho = self._project_grads(grads)
         
         return loss, (
-            grad_lambda,
-            grad_mu,
-            grad_rho
+            grad_lambda / np.linalg.norm(grad_lambda),
+            grad_mu / np.linalg.norm(grad_mu),
+            grad_rho / np.linalg.norm(grad_rho)
         )
 
 
@@ -680,7 +881,7 @@ class adjoint_equation_solver(elasticity_solver):
         assert(seismogram.shape[2] == len(self.detector_coords))
 
         # init constant load
-        p = ConstantLoad(
+        p = GaussianLoad(
             self.mesh, 0., self.cutoff_time, self.source_magnitude,
             self.source_center, self.source_radius
         )
@@ -751,7 +952,7 @@ class adjoint_equation_solver(elasticity_solver):
 
             preds  = np.array([u_old(c) for c in self.detector_coords])
             ground = seismogram[:, i+1].T
-            adj_source[i+1] = preds - ground
+            adj_source[i+1] = ground - preds
             
             disp_history.append(u_old.copy(deepcopy=True))
     
@@ -764,17 +965,10 @@ class adjoint_equation_solver(elasticity_solver):
     def _adjoint_forward(self, adj_source, save_callback=None):
 
         # invert timestep
-        self.dt = Constant(-self.dt)
+        #self.dt = Constant(-self.dt)
 
         # build adjoint source as sum of delta functions
         p = AdjointLoad(self.mesh, self.T, self.T, adj_source, self.detector_coords)
- 
-        a1 = Constant(1. / self.beta / self.dt ** 2)
-        a2 = Constant(-1. * self.dt / self.beta / self.dt ** 2)
-        a3 = Constant(-(1 - 2 * self.beta) / 2. / self.beta)
-        v1 = Constant(1.)
-        v2 = Constant(self.dt * (1 - self.gamma))
-        v3 = Constant(self.dt * self.gamma)
 
         # build ufl bilinear and linear forms
 
@@ -793,8 +987,8 @@ class adjoint_equation_solver(elasticity_solver):
         # and add adj. boundary condition
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) -\
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) +\
-              self.k(self.avg(u_old, du, self.alpha_f), u_) +\
-              dot(self.sigma(self.avg(u_old, du, self.alpha_f)) * self.ny - p, u_) * self.dss
+              self.k(self.avg(u_old, du, self.alpha_f), u_) -\
+              self.Wext(u_, p, self.dss)
     
         a_form = lhs(res)
         L_form = rhs(res)
@@ -804,7 +998,8 @@ class adjoint_equation_solver(elasticity_solver):
         solver = LUSolver(K, self.lu_solver)
 
         # save adjoint history while running
-        adj_history = [u_old.copy(deepcopy=True)]
+        adj_history_disp = [u_old.copy(deepcopy=True)]
+        adj_history_acc  = [a_old.copy(deepcopy=True)]
 
         time = np.linspace(self.T, 0., self.time_steps)
 
@@ -816,7 +1011,7 @@ class adjoint_equation_solver(elasticity_solver):
             )):
             
             t = time[i + 1]
-            p.t = t - float(self.alpha_f * self.dt)
+            p.t = t + float(self.alpha_f * self.dt)
 
             res = assemble(L_form)
             for bc in self.bcs: bc.apply(res)
@@ -824,14 +1019,16 @@ class adjoint_equation_solver(elasticity_solver):
             solver.solve(K, u.vector(), res)
             self._update_fields(u, u_old, v_old, a_old)
             
-            adj_history.append(u_old.copy(deepcopy=True))
+            adj_history_disp.append(u_old.copy(deepcopy=True))
+            adj_history_acc.append(a_old.copy(deepcopy=True))
             if save_callback is not None: save_callback(i, t, u_old, v_old, a_old)
 
 
-        self.dt = Constant(-self.dt)
-        adj_history.reverse()
+        #self.dt = Constant(-self.dt)
+        adj_history_disp.reverse()
+        adj_history_acc.reverse()
 
-        return adj_history
+        return adj_history_disp, adj_history_acc
 
 
     def backward(
@@ -841,48 +1038,48 @@ class adjoint_equation_solver(elasticity_solver):
     ):
 
         loss, adj_sources, disp_history = self._forward(seismogram)
-        adjoint_history = self._adjoint_forward(adj_sources, save_callback=save_callback)
+        adj_history_disp, adj_history_acc = self._adjoint_forward(adj_sources, save_callback=save_callback)
     
 
         # compute and project gradients wrt lambda, mu, rho
 
-        grad_lambda = self.local_project(
+        grad_lambda = project(
             reduce(
                 lambda x, y: x + y,
                 [
                     -div(t) * div(a) * self.dt
-                    for t, a in zip(disp_history, adjoint_history) 
+                    for t, a in zip(disp_history, adj_history_disp) 
                 ]
             ),
             self.control_space
         )
 
-        grad_mu = self.local_project(
+        grad_mu = project(
             reduce(
                 lambda x, y: x + y,
                 [
                     -inner(grad(a), grad(t) + grad(t).T) * self.dt
-                    for t, a in zip(disp_history, adjoint_history)
+                    for t, a in zip(disp_history, adj_history_disp)
                 ]
             ),
             self.control_space
         )
 
-        grad_rho = self.local_project(
+        grad_rho = project(
             reduce(
                 lambda x, y: x + y,
                 [
-                    -inner(t, div(self.sigma(a))) * self.dt 
-                    for t, a in zip(disp_history, adjoint_history)
+                    inner(t, a) * self.dt 
+                    for t, a in zip(disp_history, adj_history_acc)
                 ] 
             ),
             self.control_space
         )
 
-        grad_lambda, grad_mu, grad_rho = self._project_grads([grad_lambda, grad_mu,  grad_rho])
+        grad_lambda, grad_mu, grad_rho = self._project_grads([grad_lambda, grad_mu, grad_rho])
 
         return loss, (
-            float(self.factor_lambda) * grad_lambda,
-            float(self.factor_mu) * grad_mu,
-            float(self.factor_rho) * grad_rho
+            1e-3 * grad_lambda / np.linalg.norm(grad_lambda),
+            1e-3 * grad_mu / np.linalg.norm(grad_mu),
+            1e-3 * grad_rho / np.linalg.norm(grad_rho)
         )
