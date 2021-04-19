@@ -101,13 +101,14 @@ class BaseTrainer:
                 pass
             torch.save(states, os.path.join(self.snapshot_path, time_string + '.pth'))
 
-    def validate(self, metrics_list, batch_size=64):
+    def validate(self, metrics_list, visualize, batch_size=64):
+        # TODO: smarter batch size settings
         """
         Evaluate the list of given metrics with data.
         If validational dataset not is specified, evaluation will run on the single batch from
         training dataset
- 
-        :type metrics_list: List of :class:`BaseMetric` or None 
+
+        :type metrics_list: List of :class:`BaseMetric` or None
 
         """
         self.model.train(False)
@@ -120,24 +121,20 @@ class BaseTrainer:
         else:
             batch_gen = torch.utils.data.DataLoader(
                 self.val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
-                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
-            )
+                num_workers=2, collate_fn=lambda x: SeismogramBatch(x))
 
         m_values = {m.name: [] for m in metrics_list}
+        visualization = None
 
         with torch.no_grad():
 
             if self.val_dataset is None:
 
                 val_batch = next(iter(batch_gen)).to(self.device)
-                preds = self.model.forward(val_batch)
+                preds = self.model.forward(val_batch.seismograms)
+                for m in metrics_list: m_values[m.name].append(m(val_batch, preds))
 
-                for m in metrics_list:
-                    m_values[m.name].append(m(
-                        preds.cpu().data.numpy(),
-                        val_batch.masks.cpu().data.numpy(),
-                        val_batch.weights.cpu().data.numpy()
-                    ))
+                if visualize is not None: visualization = visualize(val_batch, preds)
 
             else:
 
@@ -146,17 +143,10 @@ class BaseTrainer:
                     val_batch = val_batch.to(self.device)
                     preds = self.model.forward(val_batch)
 
-                    for m in metrics_list:
-                        m_values[m.name].append(m(
-                            preds.cpu().data.numpy(),
-                            val_batch.masks.cpu().data.numpy(),
-                            val_batch.weights.cpu().data.numpy()
-                        ))
+                    for m in metrics_list: m_values[m.name].append(m(val_batch, preds))
 
-        for k in m_values.keys():
-            m_values[k] = np.mean(np.array(m_values[k]))
-
-        return m_values
+        for k in m_values.keys(): m_values[k] = np.mean(np.array(m_values[k]))
+        return m_values, visualization
 
     def train(
             self,
@@ -213,12 +203,12 @@ class BaseTrainer:
 
                     if num_solver_type == 'adjoint_equation':
                         adj_solver = adjoint_equation_solver(
-                            preds_lambda, preds_mu, np.ones_like(preds_lambda),
+                            preds_lambda, preds_mu, preds_rho,
                             detector_coordinates
                         )
                     else:
                         adj_solver = dolfin_adjoint_solver(
-                            preds_lambda, preds_mu, np.ones_like(preds_lambda),
+                            preds_lambda, preds_mu, preds_rho,
                             detector_coordinates
                         )
 

@@ -6,9 +6,10 @@ from .func_utils import constant
 from functools import partial
 from collections import OrderedDict
 
+import yaml
 
 
-class SegNet_3Head(nn.Module):
+class SegNet_3Head_conf(nn.Module):
 
     """
     See https://arxiv.org/abs/1511.00561 for base article
@@ -81,7 +82,8 @@ class SegNet_3Head(nn.Module):
         self,
         conv_type='regular',
         norm_layer='instance',
-        activation='CELU'
+        activation='CELU',
+        yaml_path = "RheologyReconstruction/pipeline/dolfin_adjoint/solver_config.yaml"
     ):
 
         assert conv_type in ('regular', 'dilated')
@@ -89,11 +91,13 @@ class SegNet_3Head(nn.Module):
         super().__init__()
 
         self.input_size = 128
-
-        #TODO: parameters from config
-        encoder_channels = [64, 128, 256]
-        decoder_channels = [256, 128, 64]
-        dropout_rate     = 0.
+       
+        with open(yaml_path, 'r') as stream:
+            conf = yaml.safe_load(stream)
+            
+        encoder_channels = conf["Neural Network"]["encoder_channels"]
+        decoder_channels = conf["Neural Network"]["decoder_channels"]
+        dropout_rate = conf["Neural Network"]["dropout_rate"] 
 
         self.conv_type  = conv_type
         self.norm_layer = norm_layer

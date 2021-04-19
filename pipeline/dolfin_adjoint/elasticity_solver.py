@@ -156,6 +156,7 @@ class elasticity_solver():
 
         with open(config_file, 'r') as f:
             config = yaml.load(f, Loader=Loader)
+
         validator = yaml.load(__validation_schema__, Loader=Loader)
 
         validate(config, validator)
@@ -193,7 +194,7 @@ class elasticity_solver():
         self.alpha_m = config['method']['alphas']['alpha_m']
         self.lu_solver = config['method']['LU_solver']
 
-        # post-init processing 
+        # post-init processing
 
         # redefine physical parameters as constant functions
         self.scale_mu = Constant(self.scale_mu)
@@ -315,7 +316,7 @@ class elasticity_solver():
 
     def c(self, u, u_):
         """
-        Rayleigh dampening   
+        Rayleigh dampening
         """
         return self.eta_m * self.m(u, u_) + self.eta_k * self.k(u, u_)
 
@@ -614,9 +615,9 @@ class dolfin_adjoint_solver(elasticity_solver):
         grad_lambda, grad_mu, grad_rho = self._project_grads(grads)
 
         return loss, (
-            float(self.factor_lambda) * grad_lambda,
-            float(self.factor_mu) * grad_mu,
-            float(self.factor_rho) * grad_rho
+            grad_lambda,
+            grad_mu,
+            grad_rho
         )
 
 
@@ -729,7 +730,7 @@ class adjoint_equation_solver(elasticity_solver):
             # add to misfit functional
             for a, b in zip(preds, ground): j += 0.5 * np.sum(np.power(b - a, 2))
 
-        return j / float(self.time_steps), adj_source, disp_history
+        return j, adj_source, disp_history
 
     def _adjoint_forward(self, adj_source, save_callback=None):
 
