@@ -6,11 +6,9 @@ from scipy.ndimage import sobel
 class BaseMetric():
 
     def __init__(self, name: str):
-
         self.name = name
 
     def __call__(self):
-
         raise NotImplementedError
 
 
@@ -35,9 +33,9 @@ class Dice(BaseMetric):
     :returns: DICE - average Dice metrics over the batch
     """
 
-    def __init__(self): 
+    def __init__(self):
         super().__init__("average_dice_score")
-        self.EPS = 1e-10 # a constant for numerical stability
+        self.EPS = 1e-10  # a constant for numerical stability
 
     @staticmethod
     def _dice(true, pred):
@@ -53,7 +51,7 @@ class Dice(BaseMetric):
     def __call__(self, preds, labels, weights, tolerance=0.5):
 
         AVG_DICE = 0.0
-        empty    = 0.0
+        empty = 0.0
 
         for t, p in zip(labels, preds):
             if not np.sum(t): empty += 1.
@@ -63,7 +61,6 @@ class Dice(BaseMetric):
 
 
 class WeightedDice(BaseMetric):
-
     """
     A weighted Dice coefficient for binary classification problem over the batch of images
 
@@ -86,11 +83,10 @@ class WeightedDice(BaseMetric):
         DICE - average weighted Dice metrics over the batch
     """
 
-    def __init__(self): 
+    def __init__(self):
         super().__init__("average_weighted_dice_score")
-        self.EPS = 1e-10 # a constant for numerical stability
-    
-   
+        self.EPS = 1e-10  # a constant for numerical stability
+
     @staticmethod
     def _weighted_dice(true, pred, weights):
 
@@ -105,7 +101,7 @@ class WeightedDice(BaseMetric):
     def __call__(self, preds, labels, weights, tolerance=0.5):
 
         AVG_DICE = 0.0
-        empty    = 0.0
+        empty = 0.0
 
         for t, p, w in zip(labels, preds, weights):
             if not np.sum(t): empty += 1.

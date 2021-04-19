@@ -1,28 +1,17 @@
 import torch
-import torch.nn as nn
 import numpy as np
 import os
-import time
-import torch.nn.functional as F
 import torch.optim as optim
-import subprocess
+import matplotlib.pyplot as plt
+from IPython.display import clear_output
 
 from datetime import datetime
 from dataset import SeismogramBatch
 from utils import get_latest_snapshot_name, make_snapshot_directory
 from neural_networks.loss import weightedBCELoss
-from IPython.display import clear_output
 from dolfin_adjoint.elasticity_solver import dolfin_adjoint_solver, adjoint_equation_solver
-from utils import isnotebook
 
-__running_on_notebook__ = isnotebook()
-
-if __running_on_notebook__:
-    from tqdm import tqdm
-else:
-    from tqdm.notebook import tqdm
-
-import matplotlib.pyplot as plt
+from tqdm.autonotebook import tqdm
 
 
 class BaseTrainer:
@@ -41,7 +30,6 @@ class BaseTrainer:
             snapshot_path=None,
             snapshot_interval=1000,
     ):
-
         """ 
         :param model: a model to train
         :type model : torch.nn.Module
@@ -53,7 +41,6 @@ class BaseTrainer:
         :type val_dataset  : SeismogramDataset
 
         """
-
         self.model = model
         self.device = device
         self.loss_fn = loss_fn()
@@ -114,7 +101,7 @@ class BaseTrainer:
                 pass
             torch.save(states, os.path.join(self.snapshot_path, time_string + '.pth'))
 
-    def validate(self, metrics_list):
+    def validate(self, metrics_list, batch_size=64):
         """
         Evaluate the list of given metrics with data.
         If validational dataset not is specified, evaluation will run on the single batch from
@@ -123,18 +110,13 @@ class BaseTrainer:
         :type metrics_list: List of :class:`BaseMetric` or None 
 
         """
-
         self.model.train(False)
 
-        batch_size = 64
-
         if self.val_dataset is None:
-
             batch_gen = torch.utils.data.DataLoader(
                 self.train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
                 num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
             )
-
         else:
             batch_gen = torch.utils.data.DataLoader(
                 self.val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
@@ -179,7 +161,7 @@ class BaseTrainer:
     def train(
             self,
             detector_coordinates,
-            batch_size=32,
+            batch_size=64,
             epochs=100,
             from_zero=True,
             num_solver_type='adjoint_equation'
@@ -197,8 +179,6 @@ class BaseTrainer:
             shuffle=True, pin_memory=True, num_workers=5,
             collate_fn=lambda x: SeismogramBatch(x)
         )
-
-        step = 1
 
         for current_epoch in tqdm(range(epochs), desc=f'Running training procedure'):
 
@@ -250,10 +230,11 @@ class BaseTrainer:
                     # axes[1].imshow(grad_mu)
                     # axes[1].set_title('mu')
                     # plt.show()
-
-                    preds[0][i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
-                    preds[1][i].backward(torch.from_numpy(grad_mu), retain_graph=True)
-                    preds[2][i].backward(torch.from_numpy(grad_rho), retain_graph=True)
+                    for idx, param in enumerate((grad_lambda, grad_mu, grad_rho)):
+                        if self.device != torch.device("cpu"):
+                            preds[idx][i].backward(torch.from_numpy(param).cuda(), retain_graph=True)
+                        else:
+                            preds[idx][i].backward(torch.from_numpy(param), retain_graph=True)
 
                     L.append(j)
 
@@ -262,13 +243,11 @@ class BaseTrainer:
                 self.optimizer.step()
                 torch.cuda.empty_cache()
 
-                step += 1
+                print(f'epoch: {current_epoch}; loss: {L}')
 
-                print(L)
-
-                if self.logger is not None:
-                    self.logger.log(step, L)
-                if step % self.snapshot_interval == 0:
-                    self.save_model()
+            # if self.logger is not None:
+            #     self.logger.log(current_epoch, L)
+            # if current_epoch % self.snapshot_interval == 0:
+            #     self.save_model()
 
             # clear_output(wait=True)
