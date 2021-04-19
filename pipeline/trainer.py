@@ -230,6 +230,7 @@ class BaseTrainer:
                     # axes[1].imshow(grad_mu)
                     # axes[1].set_title('mu')
                     # plt.show()
+
                     for idx, param in enumerate((grad_lambda, grad_mu, grad_rho)):
                         if self.device != torch.device("cpu"):
                             preds[idx][i].backward(torch.from_numpy(param).cuda(), retain_graph=True)
@@ -245,9 +246,11 @@ class BaseTrainer:
 
                 print(f'epoch: {current_epoch}; loss: {L}')
 
-            # if self.logger is not None:
-            #     self.logger.log(current_epoch, L)
-            # if current_epoch % self.snapshot_interval == 0:
-            #     self.save_model()
+            if self.logger is not None:
+                self.logger.log(current_epoch, L)
+                # TODO: log image
+                # log_image(self, img_name, img, current_epoch):
+            if current_epoch % self.snapshot_interval == 0 or current_epoch == epochs - 1:
+                self.save_model()
 
             # clear_output(wait=True)
