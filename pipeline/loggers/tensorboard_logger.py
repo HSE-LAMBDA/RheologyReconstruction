@@ -8,8 +8,5 @@ class TensorboardLogger:
     def log(self, epoch, loss):
         self.writer.add_scalar("Loss (train)", loss, epoch)
 
-    def log_image(self):
-        raise NotImplementedError
-        # img_name = None
-        # img = None
-        # writer.add_image(img_name, img)
+    def log_image(self, img_name, img, epoch):
+        self.writer.add_image(img_name, img, global_step=epoch)
