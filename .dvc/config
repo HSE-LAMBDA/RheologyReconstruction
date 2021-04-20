@@ -1,0 +1,6 @@
+[core]
+    remote = rheology
+    
+['remote "rheology"']
+    url = azure://rheology
+    connection_string = DefaultEndpointsProtocol=https;AccountName=rheologyreconstruction;AccountKey=a8AQ6Mw+QgYrU9dBxNA2BvKtP/eaS5Kbyn0j8XySGrMrNEVeZA1PY3b7du3GBSjrpSijxO+laf+coUbtfX7mpQ==;EndpointSuffix=core.windows.net

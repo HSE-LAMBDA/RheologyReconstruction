@@ -1,0 +1,4 @@
+outs:
+- md5: 2559ab4d1e1f1db1d3ed0d7359c39ebc
+  size: 187069
+  path: small_dataset.tar.gz
