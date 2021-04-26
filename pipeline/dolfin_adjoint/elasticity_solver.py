@@ -13,80 +13,145 @@ from .expressions import *
 
 from fenics_adjoint import *
 
+# TODO: schema tests
+
 __validation_schema__ = """
 type: object
 properties:
+
   mesh:
     type: object
     properties:
+      
+      mesh_type:
+        description: "Mesh type for numerical solver"
+        type: string
+        enum: ['custom', 'regular']
+        default: 'regular'
+
       bounding_box:
+        description: "Region of interest for rheology reconstruction"
         type: object
         properties:
+          
           p1:
             type: array
             items:
               type: number
             minItems: 2 
             maxItems: 2
+          
           p2:
             type: array
             items:
               type: number
             minItems: 2 
             maxItems: 2
+        
         required: [p1, p2]
-      nx: 
-        type: integer
-        exclusiveMinimum: 1
-      ny:
-        type: integer
-        exclusiveMinimum: 1
-    required: [bounding_box, nx, ny]
 
-  physics:
+    if:
+      properties:
+        mesh_type:
+          enum: ['regular']
+    then:
+      properties:
+        nx: 
+          type: integer
+          exclusiveMinimum: 1
+        ny:
+          type: integer
+          exclusiveMinimum: 1
+      required: [mesh_type]
+    else:   
+      properties:
+        filename: 
+          type: string
+      required: [mesh_type]
+
+  detectors:
+    description: 'Detector layout information'
     type: object
     properties:
+      
+      layout_type:
+        description: "Layout type"
+        type: string
+        enum: ['uniform', 'custom']
+        default: 'uniform'
+    
+    if:
+      properties:
+        layout_type:
+          const: 'uniform'
+    then:
+      properties:
+        number_of_detectors: 
+          type: integer
+          exclusiveMinimum: 1
+          
+        location:
+          type: string
+          enum: ['top', 'bottom', 'left', 'right']
+            
+      required: [layout_type]    
+
+    else:
+      properties:
+        filename: 
+          type: string
+
+      required: [layout_type]
+
+  physics:
+    description: 'Prior assumptions about rheology parameters'
+    type: object
+    properties:
+      
       lambda:
         type: object
         properties:
           scale_lambda: 
             type: number
-            #minimum: '0.0'
           factor_lambda: 
             type: number
-            #minimum: '0.0'
         required: [scale_lambda, factor_lambda]
+
       mu:
         type: object
         properties:
           scale_mu: 
             type: number
-            #minimum: '0.0'
           factor_mu: 
             type: number
-            #minimum: '0.0'
         required: [scale_mu, factor_mu]
+
       rho:
         type: object
         properties:
           scale_rho:
             type: number
-            #minimum: '0.0'
           factor_rho:
             type: number
-            #minimum: '0.0'
         required: [scale_rho, factor_rho]
+
     required: [lambda, mu, rho] 
 
   task:
+    description: "Integration task description"
     type: object
     properties:
+      
       target_time: 
         type: number
-        #minimum: '0.0'
+      
       source:
         type: object
         properties:
+          source_type:
+            type: string
+            enum: ['sine', 'gaussian', 'constant']
+            default: 'gaussian'
           location: 
             type: string
             enum: [
@@ -103,13 +168,48 @@ properties:
             maxItems: 2 
           radius: 
             type: number
-            #minimum: '0.0'
           magnitude: 
             type: number
-            #minimum: '0.0'
           cutoff_time:
             type: number
-        required: [location, center, radius, magnitude, cutoff_time] 
+
+        required: [
+          source_type,
+          location, 
+          center, 
+          radius, 
+          magnitude, 
+          cutoff_time
+        ]
+
+        if:
+          properties:
+            source_type:
+              const: 'gaussian'
+        then:
+          properties:
+            period: 
+              description: 'Period of sine oscillations'
+              type: number
+            mu:
+              description: 'Expectation of source in time'
+              type: number
+            sigma:
+              description: 'Dispersion of source in time'
+              type: number
+          required: [source_type]
+        
+        if:
+          properties:
+            source_type:
+              const: 'sine'
+        then:
+          properties:
+            period:
+              description: 'Period of sine oscillations'
+              type: number
+          required: [source_type]
+    
     required: [target_time, source]
 
   method:
@@ -141,67 +241,157 @@ properties:
           'petsc'
         ]
     required: [polynomial_type, polynomial_order, time_steps, alphas]
-required: [mesh, physics, task, method]
+
+required: [mesh, detectors, physics, task, method]
 """
 
 
 class elasticity_solver():
 
     def __init__(
-            self,
-            values_lambda,
-            values_mu,
-            values_rho,
-            config_file='dolfin_adjoint/solver_config.yaml'):
+        self,
+        values_lambda,
+        values_mu,
+        values_rho, 
+        config_file
+    ):
 
-        with open(config_file, 'r') as f:
-            config = yaml.load(f, Loader=Loader)
+        # Renew tape to avoid memory leaks
+        set_working_tape(Tape()) 
 
+        with open(config_file, 'r') as f: config = yaml.load(f, Loader=Loader)
         validator = yaml.load(__validation_schema__, Loader=Loader)
-
         validate(config, validator)
 
         # mesh parameters
+
+        self.mesh_type = config['mesh']['mesh_type']
+
         self.bounding_box = [
             config['mesh']['bounding_box']['p1'],
             config['mesh']['bounding_box']['p2']
         ]
 
-        self.nx = config['mesh']['nx']
-        self.ny = config['mesh']['ny']
+        if self.mesh_type == 'regular':
+
+            self.nx = config['mesh']['nx']
+            self.ny = config['mesh']['ny']
+
+            self.mesh = RectangleMesh(
+                Point(self.bounding_box[0]),
+                Point(self.bounding_box[1]), 
+                self.nx,
+                self.ny
+            )
+
+        if self.mesh_type == 'custom':
+            self.mesh = Mesh(config['mesh']['filename'])
+
+        # detector_coords
+
+        self.detector_layout_type = config['detectors']['layout_type']
+        
+        if self.detector_layout_type == 'uniform':
+
+            if config['detectors']['location'] == 'top':
+            
+                coord_space = np.linspace(
+                    self.bounding_box[0][0], 
+                    self.bounding_box[1][0],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([c, self.bounding_box[1][1]]) for c in coord_space)
+                ] 
+
+            if config['detectors']['location'] == 'bottom':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][0], 
+                    self.bounding_box[1][0],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([c, self.bounding_box[0][1]]) for c in coord_space)
+                ]
+
+            if config['detectors']['location'] == 'right':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][1], 
+                    self.bounding_box[1][1],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([self.bounding_box[1][0], c]) for c in coord_space)
+                ]                
+
+            if config['detectors']['location'] == 'left':
+
+                coord_space = np.linspace(
+                    self.bounding_box[0][1], 
+                    self.bounding_box[1][1],
+                    config['detectors']['number_of_detectors']
+                )
+                self.detector_coords = [
+                    (np.array([self.bounding_box[0][0], c]) for c in coord_space)
+                ]                
+
+        if self.detector_layout_type == 'custom': raise NotImplementedError
 
         # physics
-        self.scale_lambda = config['physics']['lambda']['scale_lambda']
+        self.scale_lambda  = config['physics']['lambda']['scale_lambda']
         self.factor_lambda = config['physics']['lambda']['factor_lambda']
-        self.scale_mu = config['physics']['mu']['scale_mu']
-        self.factor_mu = config['physics']['mu']['factor_mu']
-        self.scale_rho = config['physics']['rho']['scale_rho']
-        self.factor_rho = config['physics']['rho']['factor_rho']
+        self.scale_mu      = config['physics']['mu']['scale_mu']
+        self.factor_mu     = config['physics']['mu']['factor_mu']
+        self.scale_rho     = config['physics']['rho']['scale_rho']
+        self.factor_rho    = config['physics']['rho']['factor_rho']
 
         # task
         self.T = config['task']['target_time']
-        self.source_location = config['task']['source']['location']
-        self.source_center = config['task']['source']['center']
-        self.source_radius = config['task']['source']['radius']
+        self.source_location  = config['task']['source']['location']
+        self.source_center    = config['task']['source']['center']
+        self.source_radius    = config['task']['source']['radius']
         self.source_magnitude = config['task']['source']['magnitude']
-        self.cutoff_time = config['task']['source']['cutoff_time']
+        self.cutoff_time      = config['task']['source']['cutoff_time']
+        self.source_type      = config['task']['source']['source_type']
+
+        if self.source_type == 'gaussian':
+
+            period = config['task']['source']['period']
+            mu     = config['task']['source']['mu']
+            sigma  = config['task']['source']['sigma']
+
+            self.source = GaussianLoad(
+                self.mesh, 0., self.cutoff_time, self.source_magnitude,
+                self.source_center, self.source_radius,
+                period, mu, sigma
+            )
+
+        if self.source_type == 'sine':
+
+            period = config['task']['source']['period']
+            self.source = SineLoad(
+                self.mesh, 0., self.cutoff_time, self.source_magnitude,
+                self.source_center, self.source_radius, period 
+            )
 
         # method
-        self.poly_type = config['method']['polynomial_type']
+        self.poly_type  = config['method']['polynomial_type']
         self.poly_order = config['method']['polynomial_order']
         self.time_steps = config['method']['time_steps']
-        self.alpha_f = config['method']['alphas']['alpha_f']
-        self.alpha_m = config['method']['alphas']['alpha_m']
-        self.lu_solver = config['method']['LU_solver']
+        self.alpha_f    = config['method']['alphas']['alpha_f']
+        self.alpha_m    = config['method']['alphas']['alpha_m']
+        self.lu_solver  = config['method']['LU_solver']
 
-        # post-init processing
+        # post-init processing 
 
         # redefine physical parameters as constant functions
-        self.scale_mu = Constant(self.scale_mu)
-        self.factor_mu = Constant(self.factor_mu)
-        self.scale_rho = Constant(self.scale_rho)
-        self.factor_rho = Constant(self.factor_rho)
-        self.scale_lambda = Constant(self.scale_lambda)
+        self.scale_mu      = Constant(self.scale_mu)
+        self.factor_mu     = Constant(self.factor_mu)
+        self.scale_rho     = Constant(self.scale_rho)
+        self.factor_rho    = Constant(self.factor_rho)
+        self.scale_lambda  = Constant(self.scale_lambda)
         self.factor_lambda = Constant(self.factor_lambda)
 
         # add other useful constants
@@ -210,28 +400,30 @@ class elasticity_solver():
         self.eta_m = Constant(0.)
         self.eta_k = Constant(0.)
 
-        self.dt = Constant(self.T / self.time_steps)
+        self.dt      = Constant(self.T / self.time_steps)
         self.alpha_f = Constant(self.alpha_f)
         self.alpha_m = Constant(self.alpha_m)
-        self.gamma = Constant(0.5 + self.alpha_f - self.alpha_m)
-        self.beta = Constant((self.gamma + 0.5) ** 2 / 4.)
+        self.gamma   = Constant(0.5 + self.alpha_f - self.alpha_m)
+        self.beta    = Constant((self.gamma + 0.5) ** 2 / 4.)
 
-        # rectangular mesh
-        self.mesh = RectangleMesh(
-            Point(self.bounding_box[0]),
-            Point(self.bounding_box[1]),
-            self.nx,
-            self.ny
-        )
-
-        self.V = VectorFunctionSpace(self.mesh, self.poly_type, self.poly_order)  # base function space
-        self.control_space = FunctionSpace(self.mesh, self.poly_type, self.poly_order)  # control space
+        
+        self.V = VectorFunctionSpace(self.mesh, self.poly_type, self.poly_order) # base function space
+        self.control_space = FunctionSpace(self.mesh, self.poly_type, self.poly_order) # control space
 
         # create boundary subdomains
-        top = boundary_y(self.bounding_box[1][1])
-        bot = boundary_y(self.bounding_box[0][1])
-        left = boundary_x(self.bounding_box[0][0])
-        right = boundary_x(self.bounding_box[1][0])
+        top   = boundary_y(self.bounding_box[1][1])
+        bot   = boundary_y(
+            self.bounding_box[0][1] -\
+            (self.bounding_box[1][1] - self.bounding_box[0][1])
+        )
+        left  = boundary_x(
+            self.bounding_box[0][0] -\
+            (self.bounding_box[1][0] - self.bounding_box[0][0])
+        )
+        right = boundary_x(
+            self.bounding_box[1][0] +\
+            (self.bounding_box[1][0] - self.bounding_box[0][0])
+        )
 
         self.boundaries = MeshFunction("size_t", self.mesh, self.mesh.topology().dim() - 1)
 
@@ -248,20 +440,23 @@ class elasticity_solver():
             DirichletBC(self.V, zero, bot)
         ]
 
+
         self.values_lambda = values_lambda
-        self.values_mu = values_mu
-        self.values_rho = values_rho
+        self.values_mu     = values_mu
+        self.values_rho    = values_rho
+
+        self.ny = Constant((0., 1.))
 
         # create distributions as interpolated expressions
         self.lmbda = interpolate(
             interpolant(self.bounding_box, self.values_lambda), self.control_space)
-        self.mu = interpolate(
+        self.mu    = interpolate(
             interpolant(self.bounding_box, self.values_mu), self.control_space)
-        self.rho = interpolate(
+        self.rho   = interpolate(
             interpolant(self.bounding_box, self.values_rho), self.control_space)
 
         self.dss = ds(subdomain_data=self.boundaries)
-
+           
         if self.source_location == 'top':
             self.dss = self.dss(1)
         if self.source_location == 'bottom':
@@ -269,7 +464,7 @@ class elasticity_solver():
         if self.source_location == 'left':
             self.dss = self.dss(3)
         if self.source_location == 'right':
-            self.dss = self.dss(4)
+            self.dss = self.dss(4)              
 
     @staticmethod
     def local_project(v, V, u=None):
@@ -372,8 +567,8 @@ class elasticity_solver():
         dy_l = (p2[1] - p1[1]) / float(sl[1])
 
         lmbda_xx, lmbda_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_l / 2., p2[0] - dx_l / 2., sl[0]),
-            np.linspace(p1[1] + dy_l / 2., p2[1] - dy_l / 2., sl[1]),
+            np.linspace(p1[0], p2[0], sl[0]),
+            np.linspace(p1[1], p2[1], sl[1]),
         )
 
         arr_lambda = [grads[0](x, y) for x, y in zip(lmbda_xx.flatten(), lmbda_yy.flatten())]
@@ -384,8 +579,8 @@ class elasticity_solver():
         dy_m = (p2[1] - p1[1]) / float(sm[1])
 
         mu_xx, mu_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_m / 2., p2[0] - dx_m / 2., sl[0]),
-            np.linspace(p1[1] + dy_m / 2., p2[1] - dy_m / 2., sl[1]),
+            np.linspace(p1[0], p2[0], sm[0]),
+            np.linspace(p1[1], p2[1], sm[1]),
         )
 
         arr_mu = [grads[1](x, y) for x, y in zip(mu_xx.flatten(), mu_yy.flatten())]
@@ -396,8 +591,8 @@ class elasticity_solver():
         dy_r = (p2[1] - p1[1]) / float(sr[1])
 
         rho_xx, rho_yy = np.meshgrid(
-            np.linspace(p1[0] + dx_r / 2., p2[0] - dx_r / 2., sl[0]),
-            np.linspace(p1[1] + dy_r / 2., p2[1] - dy_r / 2., sl[1]),
+            np.linspace(p1[0], p2[0], sr[0]),
+            np.linspace(p1[1], p2[1], sr[1]),
         )
 
         arr_rho = [grads[2](x, y) for x, y in zip(rho_xx.flatten(), rho_yy.flatten())]
@@ -406,8 +601,8 @@ class elasticity_solver():
         return arr_lambda, arr_mu, arr_rho
 
     def forward(
-            self,
-            save_callback=None
+        self,
+        save_callback=None
     ):
 
         # init constant load
@@ -429,8 +624,8 @@ class elasticity_solver():
 
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) + \
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) + \
-              self.k(self.avg(u_old, du, self.alpha_f), u_) - \
-              self.Wext(u_, p, self.dss)
+              self.k(self.avg(u_old, du, self.alpha_f), u_) + \
+              dot(self.sigma(self.avg(u_old, du, self.alpha_f)) * self.ny - self.source, u_) * self.dss
 
         a_form = lhs(res)
         L_form = rhs(res)
@@ -460,17 +655,17 @@ class dolfin_adjoint_solver(elasticity_solver):
     """
 
     def __init__(
-            self,
-            values_lambda,
-            values_mu,
-            values_rho,
-            detector_coords,
-            config_file='dolfin_adjoint/solver_config.yaml'
+        self,
+        values_lambda,
+        values_mu,
+        values_rho,
+        config_file
     ):
 
-        super().__init__(values_lambda, values_mu, values_rho, config_file=config_file)
-        self.detector_coords = detector_coords
+        super().__init__(values_lambda, values_mu, values_rho, config_file)
+       
 
+        # more useful constants
         self.a1 = Constant(1. / self.beta / self.dt ** 2)
         self.a2 = Constant(-1. * self.dt / self.beta / self.dt ** 2)
         self.a3 = Constant(-(1 - 2 * self.beta) / 2. / self.beta)
@@ -478,31 +673,27 @@ class dolfin_adjoint_solver(elasticity_solver):
         self.v2 = Constant(self.dt * (1 - self.gamma))
         self.v3 = Constant(self.dt * self.gamma)
 
-    # use costy functions
-    # to preserve gradients
-    # TODO: function stack grows very fast, and it looks like
-    #       it is the reason of memory leakage. Is there a way to clean
-    #       the stack explicitly?
 
     def _update_a(self, u, u_old, v_old, a_old, ufl=True):
         if ufl:
-            dt_ = self.dt
-            beta_ = self.beta
-            return (u - u_old - dt_ * v_old) / beta_ / dt_ ** 2 - \
-                   (1 - 2 * beta_) / 2 / beta_ * a_old
+            dt_   = self.dt
+            beta_ = self.beta 
+            return (u - u_old - dt_ * v_old) / beta_/ dt_ ** 2 -\
+                   (1 - 2 * beta_)/2/beta_ * a_old 
 
         return FunctionAXPY([
-            (self.a1, u),
+            ( self.a1, u),
             (-self.a1, u_old),
-            (self.a2, old),
-            (self.a3, a_old)
+            ( self.a2, v_old),
+            ( self.a3, a_old)
         ], annotate=True)
+
 
     def _update_v(self, a, u_old, v_old, a_old, ufl=True):
         if ufl:
-            dt_ = self.dt
+            dt_    = self.dt
             gamma_ = self.gamma
-            return v_old + dt_ * ((1 - gamma_) * a_old + gamma_ * a)
+            return v_old + dt_*((1-gamma_)*a_old + gamma_*a)
 
         return FunctionAXPY([
             (self.v1, v_old),
@@ -510,25 +701,24 @@ class dolfin_adjoint_solver(elasticity_solver):
             (self.v3, a)
         ], annotate=True)
 
-    def _update_fields(self, u, u_old, v_old, a_old):
-        a = Function(self.V)
+    def _update_fields(self, u, v, a, u_old, v_old, a_old):
+        
         a.assign(
-            self.a1 * u - \
-            self.a1 * u_old + \
-            self.a2 * v_old + \
+            self.a1 * u -\
+            self.a1 * u_old +\
+            self.a2 * v_old +\
             self.a3 * a_old,
             annotate=True
         )
 
-        v = Function(self.V)
         v.assign(
-            self.v1 * v_old + \
-            self.v2 * a_old + \
+            self.v1 * v_old +\
+            self.v2 * a_old +\
             self.v3 * a,
             annotate=True
         )
 
-        u_old.assign(u, annotate=True)
+        u_old.assign(u, annotate=True) 
         v_old.assign(v, annotate=True)
         a_old.assign(a, annotate=True)
 
@@ -541,16 +731,12 @@ class dolfin_adjoint_solver(elasticity_solver):
         assert (seismogram.shape[1] == self.time_steps)
         assert (seismogram.shape[2] == len(self.detector_coords))
 
-        # init constant load
-        p = ConstantLoad(
-            self.mesh, 0., self.cutoff_time, self.source_magnitude,
-            self.source_center, self.source_radius
-        )
-
         # assemble bilinear and linear ufl forms
         du = TrialFunction(self.V)
         u_ = TestFunction(self.V)
-        u = Function(self.V, name="Displacement")
+        u  = Function(self.V, name="Displacement")
+        v  = Function(self.V, name="Velocity")
+        a  = Function(self.V, name='Acceleration')
 
         u_old = Function(self.V)
         v_old = Function(self.V)
@@ -561,8 +747,8 @@ class dolfin_adjoint_solver(elasticity_solver):
 
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) + \
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) + \
-              self.k(self.avg(u_old, du, self.alpha_f), u_) - \
-              self.Wext(u_, p, self.dss)
+              self.k(self.avg(u_old, du, self.alpha_f), u_) + \
+              dot(self.sigma(self.avg(u_old, du, self.alpha_f)) * self.ny - self.source, u_) * self.dss
 
         a_form = lhs(res)
         L_form = rhs(res)
@@ -576,28 +762,28 @@ class dolfin_adjoint_solver(elasticity_solver):
         # initialize error functional
         j = 0.
 
-        # for (i, dt) in enumerate(
-        #         tqdm(np.diff(time),
-        #              desc='integrating the state problem',
-        #              miniters=20
-        #              )):
         for (i, dt) in enumerate(np.diff(time)):
 
             t = time[i + 1]
-            p.t = t - float(self.alpha_f * self.dt)
+            self.source.t = t - float(self.alpha_f * self.dt)
 
             res = assemble(L_form)
             for bc in self.bcs: bc.apply(res)
 
             solver.solve(K, u.vector(), res)
-            self._update_fields(u, u_old, v_old, a_old)
+
+            self._update_fields(u, v, a, u_old, v_old, a_old)
+
+            preds  = [u(c) for c in self.detector_coords]
+            ground = seismogram[:, i+1].T
+
+            for p, g in zip(preds, ground):
+                j += 0.5 * (
+                    (float(g[0]) - p[0]) ** 2 + (float(g[1]) - p[1]) ** 2
+                )
+
             if save_callback is not None: save_callback(i, t, u_old, v_old, a_old)
 
-            preds = [u_old(c) for c in self.detector_coords]
-            ground = seismogram[:, i + 1].T
-
-            for a, b in zip(preds, ground):
-                j += 0.5 * ((float(b[0]) - a[0]) ** 2 + (float(b[1]) - a[1]) ** 2)
 
         controls = [Control(self.lmbda), Control(self.mu), Control(self.rho)]
         rf = ReducedFunctional(j, controls)
@@ -605,15 +791,22 @@ class dolfin_adjoint_solver(elasticity_solver):
         return float(j), rf
 
     def backward(
-            self,
-            seismogram,
-            save_callback=None
+        self,
+        seismogram,
+        save_callback=None,
+        return_gradient_direction=False
     ):
 
         loss, reduced_functional = self._forward(seismogram)
         grads = reduced_functional.derivative()
         grad_lambda, grad_mu, grad_rho = self._project_grads(grads)
 
+        if return_gradient_direction:
+            
+            grad_lambda /= np.linalg.norm(grad_lambda)
+            grad_mu     /= np.linalg.norm(grad_mu)
+            grad_rho    /= np.linalg.norm(grad_rho)
+            
         return loss, (
             grad_lambda,
             grad_mu,
@@ -632,33 +825,23 @@ class adjoint_equation_solver(elasticity_solver):
     """
 
     def __init__(
-            self,
-            values_lambda,
-            values_mu,
-            values_rho,
-            detector_coords,
-            config_file='dolfin_adjoint/solver_config.yaml'
+        self,
+        values_lambda,
+        values_mu,
+        values_rho,
+        config_file
     ):
 
         super().__init__(values_lambda, values_mu, values_rho, config_file=config_file)
-        self.detector_coords = detector_coords
-        # outer normal to top boundary
-        self.ny = Constant((0., 1.))
 
     def _forward(
-            self,
-            seismogram,
-            save_callback=None,
+        self,
+        seismogram,
+        save_callback=None,
     ):
 
         assert (seismogram.shape[1] == self.time_steps)
         assert (seismogram.shape[2] == len(self.detector_coords))
-
-        # init constant load
-        p = ConstantLoad(
-            self.mesh, 0., self.cutoff_time, self.source_magnitude,
-            self.source_center, self.source_radius
-        )
 
         # build ufl bilinear and linear forms
 
@@ -676,7 +859,7 @@ class adjoint_equation_solver(elasticity_solver):
         res = self.m(self.avg(a_old, a_new, self.alpha_m), u_) + \
               self.c(self.avg(v_old, v_new, self.alpha_f), u_) + \
               self.k(self.avg(u_old, du, self.alpha_f), u_) - \
-              self.Wext(u_, p, self.dss)
+              dot(self.sigma(self.avg(u_old, du, self.alpha_f)) * self.ny - self.source, u_) * self.dss
 
         a_form = lhs(res)
         L_form = rhs(res)
@@ -694,7 +877,7 @@ class adjoint_equation_solver(elasticity_solver):
         adj_source = np.zeros((seismogram.shape[1], len(self.detector_coords), 2))
 
         # values of displacement at detector locations
-        preds = np.array([u_old(c) for c in self.detector_coords])
+        preds  = np.array([u_old(c) for c in self.detector_coords])
         ground = seismogram[:, 0].T
 
         # adj sources are driven by misfit functional, so we save difference
@@ -705,11 +888,6 @@ class adjoint_equation_solver(elasticity_solver):
         disp_history = [u_old.copy(deepcopy=True)]
 
         # run integration
-        # for (i, dt) in enumerate(
-        #         tqdm(np.diff(time),
-        #              desc='integrating the state problem',
-        #              miniters=20
-        #              )):
         for (i, dt) in enumerate(np.diff(time)):
             t = time[i + 1]
             p.t = t - float(self.alpha_f * self.dt)
@@ -779,8 +957,6 @@ class adjoint_equation_solver(elasticity_solver):
 
         time = np.linspace(self.T, 0., self.time_steps)
 
-        # integrate in reverse time
-        # for (i, dt) in enumerate(tqdm(np.diff(time), desc='integrating adjoint problem in reverse time', miniters=20)):
         for (i, dt) in enumerate(np.diff(time)):
             t = time[i + 1]
             p.t = t - float(self.alpha_f * self.dt)
@@ -800,9 +976,10 @@ class adjoint_equation_solver(elasticity_solver):
         return adj_history
 
     def backward(
-            self,
-            seismogram,
-            save_callback=None
+        self,
+        seismogram,
+        save_callback=None,
+        return_gradient_direction=False
     ):
 
         loss, adj_sources, disp_history = self._forward(seismogram)
@@ -836,7 +1013,7 @@ class adjoint_equation_solver(elasticity_solver):
             reduce(
                 lambda x, y: x + y,
                 [
-                    inner(t, div(self.sigma(a))) * self.dt
+                    inner(t, 1 / self.rho * div(self.sigma(a))) * self.dt
                     for t, a in zip(disp_history, adjoint_history)
                 ]
             ),
@@ -845,8 +1022,18 @@ class adjoint_equation_solver(elasticity_solver):
 
         grad_lambda, grad_mu, grad_rho = self._project_grads([grad_lambda, grad_mu, grad_rho])
 
+        grad_lambda *= float(self.factor_lambda)
+        grad_mu     *= float(self.factor_mu)
+        grad_rho    *= float(self.factor_rho)
+
+        if return_gradient_direction:
+            
+            grad_lambda /= np.linalg.norm(grad_lambda)
+            grad_mu     /= np.linalg.norm(grad_mu)
+            grad_rho    /= np.linalg.norm(grad_rho)
+            
         return loss, (
-            float(self.factor_lambda) * grad_lambda,
-            float(self.factor_mu) * grad_mu,
-            float(self.factor_rho) * grad_rho
+            grad_lambda,
+            grad_mu,
+            grad_rho
         )
