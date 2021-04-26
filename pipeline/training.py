@@ -21,22 +21,26 @@ def main():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     ROOT_DIR = os.path.join(os.getcwd())
 
-    dataset_path = os.path.join(ROOT_DIR, 'dolfin_adjoint', '2_subdomains')
+    dataset_path = os.path.join(ROOT_DIR, '..', 'datasets', 'heterogeneity')
     train_dataset = SeismogramDataset(dataset_path)
 
     model = SegNet_3Head()
     number_of_parameters(model)
 
-    detector_coords = [(np.array([c, 2000.])) for c in np.linspace(0., 2000., 128)]
+    solver_config = os.path.join(dataset_path, 'solver_config.yaml')
 
-    t = BaseTrainer(model,
-                    device,
-                    train_dataset,
-                    optimizer_type=torch.optim.Adam,
-                    optimizer_params={'lr': 1e-3},
-                    snapshot_interval=10)
+    # TODO: test with nonempty logger
+    t = BaseTrainer(
+        model,
+        device,
+        train_dataset,
+        solver_config,
+        optimizer_type=torch.optim.Adam,
+        optimizer_params={'lr': 1e-3},
+        snapshot_interval=10
+    )
 
-    t.train(detector_coords, batch_size=1, epochs=100, num_solver_type='dolfin_adjoint')
+    t.train(batch_size=1, epochs=100, num_solver_type='dolfin_adjoint')
 
 
 if __name__ == '__main__':

@@ -21,6 +21,7 @@ class BaseTrainer:
             model,
             device,
             train_dataset,
+            solver_config,
             val_dataset=None,
             loss_fn=weightedBCELoss,
             optimizer_type=optim.Adam,
@@ -41,13 +42,15 @@ class BaseTrainer:
         :type val_dataset  : SeismogramDataset
 
         """
-        self.model = model
-        self.device = device
+        self.model   = model
+        self.device  = device
         self.loss_fn = loss_fn()
 
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
+        self.train_dataset  = train_dataset
+        self.val_dataset    = val_dataset
         self.optimizer_type = optimizer_type
+
+        self.solver_config  = solver_config
 
         if optimizer_params is None:
             self.optimizer = self.optimizer_type(self.model.parameters())
@@ -116,7 +119,7 @@ class BaseTrainer:
         if self.val_dataset is None:
             batch_gen = torch.utils.data.DataLoader(
                 self.train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,
-                num_workers=5, collate_fn=lambda x: SeismogramBatch(x)
+                num_workers=2, collate_fn=lambda x: SeismogramBatch(x)
             )
         else:
             batch_gen = torch.utils.data.DataLoader(
@@ -150,7 +153,6 @@ class BaseTrainer:
 
     def train(
             self,
-            detector_coordinates,
             batch_size=64,
             epochs=100,
             from_zero=True,
@@ -204,12 +206,12 @@ class BaseTrainer:
                     if num_solver_type == 'adjoint_equation':
                         adj_solver = adjoint_equation_solver(
                             preds_lambda, preds_mu, preds_rho,
-                            detector_coordinates
+                            self.solver_config
                         )
                     else:
                         adj_solver = dolfin_adjoint_solver(
                             preds_lambda, preds_mu, preds_rho,
-                            detector_coordinates
+                            self.solver_config
                         )
 
                     j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo)

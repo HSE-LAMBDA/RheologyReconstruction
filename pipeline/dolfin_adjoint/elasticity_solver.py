@@ -1,3 +1,4 @@
+import os
 import sys
 
 sys.path.append('..')
@@ -285,12 +286,13 @@ class elasticity_solver():
             )
 
         if self.mesh_type == 'custom':
-            self.mesh = Mesh(config['mesh']['filename'])
+            mesh_path = os.path.join(*(['/'] + config_file.split('/')[:-1] + [config['mesh']['filename']]))
+            self.mesh = Mesh(mesh_path)
 
         # detector_coords
 
         self.detector_layout_type = config['detectors']['layout_type']
-        
+
         if self.detector_layout_type == 'uniform':
 
             if config['detectors']['location'] == 'top':
@@ -301,7 +303,7 @@ class elasticity_solver():
                     config['detectors']['number_of_detectors']
                 )
                 self.detector_coords = [
-                    (np.array([c, self.bounding_box[1][1]]) for c in coord_space)
+                    (np.array([c, self.bounding_box[1][1]])) for c in coord_space
                 ] 
 
             if config['detectors']['location'] == 'bottom':
@@ -312,7 +314,7 @@ class elasticity_solver():
                     config['detectors']['number_of_detectors']
                 )
                 self.detector_coords = [
-                    (np.array([c, self.bounding_box[0][1]]) for c in coord_space)
+                    (np.array([c, self.bounding_box[0][1]])) for c in coord_space
                 ]
 
             if config['detectors']['location'] == 'right':
@@ -323,7 +325,7 @@ class elasticity_solver():
                     config['detectors']['number_of_detectors']
                 )
                 self.detector_coords = [
-                    (np.array([self.bounding_box[1][0], c]) for c in coord_space)
+                    (np.array([self.bounding_box[1][0], c])) for c in coord_space
                 ]                
 
             if config['detectors']['location'] == 'left':
@@ -334,7 +336,7 @@ class elasticity_solver():
                     config['detectors']['number_of_detectors']
                 )
                 self.detector_coords = [
-                    (np.array([self.bounding_box[0][0], c]) for c in coord_space)
+                    (np.array([self.bounding_box[0][0], c])) for c in coord_space
                 ]                
 
         if self.detector_layout_type == 'custom': raise NotImplementedError
@@ -606,10 +608,6 @@ class elasticity_solver():
     ):
 
         # init constant load
-        p = ConstantLoad(
-            self.mesh, 0., self.cutoff_time, self.source_magnitude,
-            self.source_center, self.source_radius
-        )
 
         du = TrialFunction(self.V)
         u_ = TestFunction(self.V)
@@ -638,7 +636,7 @@ class elasticity_solver():
 
         for (i, dt) in enumerate(np.diff(time)):
             t = time[i + 1]
-            p.t = t - float(self.alpha_f * self.dt)
+            self.source.t = t - float(self.alpha_f * self.dt)
 
             res = assemble(L_form)
             for bc in self.bcs: bc.apply(res)
@@ -723,10 +721,11 @@ class dolfin_adjoint_solver(elasticity_solver):
         a_old.assign(a, annotate=True)
 
     def _forward(
-            self,
-            seismogram,
-            save_callback=None
+        self,
+        seismogram,
+        save_callback=None
     ):
+
 
         assert (seismogram.shape[1] == self.time_steps)
         assert (seismogram.shape[2] == len(self.detector_coords))
