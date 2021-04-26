@@ -186,48 +186,45 @@ class BaseTrainer:
 
                 L = []
 
-                for i, (preds_lambda, preds_mu, preds_rho) in \
-                        enumerate(zip(preds[0], preds[1], preds[2])):
+                for i, preds_lambda in enumerate(preds):
 
                     preds_lambda = preds_lambda.cpu().detach().data.numpy()
-                    preds_mu = preds_mu.cpu().detach().data.numpy()
-                    preds_rho = preds_rho.cpu().detach().data.numpy()
+                    
+                    mask     = batch.masks[i].cpu().detach().data.numpy()
+                    seismo   = batch.seismograms[i].cpu().detach().numpy()
+                    distr_mu  = mask.copy()
+                    distr_rho = mask.copy()
 
-                    # TODO: add visualization callback
-                    # fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                    # axes[0].imshow(preds_lambda)
-                    # axes[0].set_title('preds')
-                    # axes[1].imshow(batch.masks.cpu().data.numpy()[0])
-                    # axes[1].set_title('ground truth')
-                    # plt.show()
-
-                    seismo = batch.seismograms[i].cpu().detach().numpy()
-
+                    #ig, axes = plt.subplots(1, 2, figsize=(12, 6))
+                    #axes[0].imshow(preds_lambda)
+                    #axes[0].set_title('preds')
+                    #axes[1].imshow(mask)
+                    #axes[1].set_title('ground truth')
+                    #plt.show()
+                    
                     if num_solver_type == 'adjoint_equation':
                         adj_solver = adjoint_equation_solver(
-                            preds_lambda, preds_mu, preds_rho,
+                            preds_lambda, distr_mu, distr_rho,
                             self.solver_config
                         )
                     else:
                         adj_solver = dolfin_adjoint_solver(
-                            preds_lambda, preds_mu, preds_rho,
+                            preds_lambda, distr_mu, distr_rho,
                             self.solver_config
                         )
 
-                    j, (grad_lambda, grad_mu, grad_rho) = adj_solver.backward(seismo)
+                    j, grad_lambda = adj_solver.backward(seismo, return_gradient_direction=True)
 
-                    # fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                    # axes[0].imshow(grad_lambda)
-                    # axes[0].set_title('lambda')
-                    # axes[1].imshow(grad_mu)
-                    # axes[1].set_title('mu')
-                    # plt.show()
+                    #plt.figure(figsize=(8,8))
+                    #plt.imshow(grad_lambda)
+                    #plt.show()
 
-                    for idx, param in enumerate((grad_lambda, grad_mu, grad_rho)):
-                        if self.device != torch.device("cpu"):
-                            preds[idx][i].backward(torch.from_numpy(param).cuda(), retain_graph=True)
-                        else:
-                            preds[idx][i].backward(torch.from_numpy(param), retain_graph=True)
+
+
+                    if self.device != torch.device("cpu"):
+                        preds[i].backward(torch.from_numpy(grad_lambda).cuda(), retain_graph=True)
+                    else:
+                        preds[i].backward(torch.from_numpy(grad_lambda), retain_graph=True)
 
                     L.append(j)
 

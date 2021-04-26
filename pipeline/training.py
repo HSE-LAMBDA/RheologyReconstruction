@@ -4,13 +4,14 @@ import numpy as np
 import os
 
 from dataset import SeismogramDataset
-from neural_networks.segnet import SegNet_3Head
+from neural_networks.fc import FC
 
 from utils import number_of_parameters
 from trainer import BaseTrainer
 
 
 def main():
+
     seed = 0
     random.seed(seed)
     np.random.seed(seed)
@@ -24,7 +25,7 @@ def main():
     dataset_path = os.path.join(ROOT_DIR, '..', 'datasets', 'heterogeneity')
     train_dataset = SeismogramDataset(dataset_path)
 
-    model = SegNet_3Head()
+    model = FC(1, 64)
     number_of_parameters(model)
 
     solver_config = os.path.join(dataset_path, 'solver_config.yaml')
@@ -36,7 +37,7 @@ def main():
         train_dataset,
         solver_config,
         optimizer_type=torch.optim.Adam,
-        optimizer_params={'lr': 1e-3},
+        optimizer_params={'lr': 1e-2},
         snapshot_interval=10
     )
 

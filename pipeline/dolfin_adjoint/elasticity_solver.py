@@ -568,39 +568,15 @@ class elasticity_solver():
         dx_l = (p2[0] - p1[0]) / float(sl[0])
         dy_l = (p2[1] - p1[1]) / float(sl[1])
 
-        lmbda_xx, lmbda_yy = np.meshgrid(
-            np.linspace(p1[0], p2[0], sl[0]),
-            np.linspace(p1[1], p2[1], sl[1]),
-        )
+        arr_lambda = []
 
-        arr_lambda = [grads[0](x, y) for x, y in zip(lmbda_xx.flatten(), lmbda_yy.flatten())]
+        for x in np.linspace(p1[0], p2[0], sl[0]):
+            for y in np.linspace(p1[1], p2[1], sl[1]):
+                arr_lambda.append(grads[0](x, y))
+
         arr_lambda = np.array(arr_lambda).reshape(*sl)
 
-        sm = self.values_mu.shape
-        dx_m = (p2[0] - p1[0]) / float(sm[0])
-        dy_m = (p2[1] - p1[1]) / float(sm[1])
-
-        mu_xx, mu_yy = np.meshgrid(
-            np.linspace(p1[0], p2[0], sm[0]),
-            np.linspace(p1[1], p2[1], sm[1]),
-        )
-
-        arr_mu = [grads[1](x, y) for x, y in zip(mu_xx.flatten(), mu_yy.flatten())]
-        arr_mu = np.array(arr_mu).reshape(*sm)
-
-        sr = self.values_rho.shape
-        dx_r = (p2[0] - p1[0]) / float(sr[0])
-        dy_r = (p2[1] - p1[1]) / float(sr[1])
-
-        rho_xx, rho_yy = np.meshgrid(
-            np.linspace(p1[0], p2[0], sr[0]),
-            np.linspace(p1[1], p2[1], sr[1]),
-        )
-
-        arr_rho = [grads[2](x, y) for x, y in zip(rho_xx.flatten(), rho_yy.flatten())]
-        arr_rho = np.array(arr_rho).reshape(*sr)
-
-        return arr_lambda, arr_mu, arr_rho
+        return arr_lambda
 
     def forward(
         self,
@@ -784,7 +760,7 @@ class dolfin_adjoint_solver(elasticity_solver):
             if save_callback is not None: save_callback(i, t, u_old, v_old, a_old)
 
 
-        controls = [Control(self.lmbda), Control(self.mu), Control(self.rho)]
+        controls = [Control(self.lmbda)]
         rf = ReducedFunctional(j, controls)
 
         return float(j), rf
@@ -798,19 +774,12 @@ class dolfin_adjoint_solver(elasticity_solver):
 
         loss, reduced_functional = self._forward(seismogram)
         grads = reduced_functional.derivative()
-        grad_lambda, grad_mu, grad_rho = self._project_grads(grads)
+        grad_lambda = self._project_grads(grads)
 
         if return_gradient_direction:
-            
             grad_lambda /= np.linalg.norm(grad_lambda)
-            grad_mu     /= np.linalg.norm(grad_mu)
-            grad_rho    /= np.linalg.norm(grad_rho)
             
-        return loss, (
-            grad_lambda,
-            grad_mu,
-            grad_rho
-        )
+        return loss, grad_lambda
 
 
 class adjoint_equation_solver(elasticity_solver):
@@ -997,42 +966,10 @@ class adjoint_equation_solver(elasticity_solver):
             self.control_space
         )
 
-        grad_mu = self.local_project(
-            reduce(
-                lambda x, y: x + y,
-                [
-                    -inner(grad(a), grad(t) + grad(t).T) * self.dt
-                    for t, a in zip(disp_history, adjoint_history)
-                ]
-            ),
-            self.control_space
-        )
-
-        grad_rho = self.local_project(
-            reduce(
-                lambda x, y: x + y,
-                [
-                    inner(t, 1 / self.rho * div(self.sigma(a))) * self.dt
-                    for t, a in zip(disp_history, adjoint_history)
-                ]
-            ),
-            self.control_space
-        )
-
-        grad_lambda, grad_mu, grad_rho = self._project_grads([grad_lambda, grad_mu, grad_rho])
-
+        grad_lambda  = self._project_grads([grad_lambda])
         grad_lambda *= float(self.factor_lambda)
-        grad_mu     *= float(self.factor_mu)
-        grad_rho    *= float(self.factor_rho)
 
         if return_gradient_direction:
-            
             grad_lambda /= np.linalg.norm(grad_lambda)
-            grad_mu     /= np.linalg.norm(grad_mu)
-            grad_rho    /= np.linalg.norm(grad_rho)
             
-        return loss, (
-            grad_lambda,
-            grad_mu,
-            grad_rho
-        )
+        return loss, grad_lambda
