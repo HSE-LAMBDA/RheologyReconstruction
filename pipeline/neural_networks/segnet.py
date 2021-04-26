@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 
 
-class SegNet_3Head(nn.Module):
+class SegNet(nn.Module):
 
     """
     See https://arxiv.org/abs/1511.00561 for base article
@@ -81,7 +81,7 @@ class SegNet_3Head(nn.Module):
         self,
         conv_type='regular',
         norm_layer='instance',
-        activation='CELU'
+        activation='ReLU'
     ):
 
         assert conv_type in ('regular', 'dilated')
@@ -145,31 +145,7 @@ class SegNet_3Head(nn.Module):
 
         self.decoder = nn.Sequential(OrderedDict(decoder))
 
-        self.head_lambda = nn.Sequential(
-            make_conv(decoder_channels[-1], decoder_channels[-1]),
-            make_norm(decoder_channels[-1]),
-            make_act(),
-            nn.Dropout2d(dropout_rate),
-            make_conv(decoder_channels[-1], decoder_channels[-1]),
-            make_norm(decoder_channels[-1]),
-            make_act(),
-            nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
-            nn.Sigmoid()
-        )
-
-        self.head_mu = nn.Sequential(
-            make_conv(decoder_channels[-1], decoder_channels[-1]),
-            make_norm(decoder_channels[-1]),
-            make_act(),
-            nn.Dropout2d(dropout_rate),
-            make_conv(decoder_channels[-1], decoder_channels[-1]),
-            make_norm(decoder_channels[-1]),
-            make_act(),
-            nn.Conv2d(decoder_channels[-1], 1, kernel_size=1),
-            nn.Sigmoid()
-        )
-
-        self.head_rho = nn.Sequential(
+        self.output  = nn.Sequential(
             make_conv(decoder_channels[-1], decoder_channels[-1]),
             make_norm(decoder_channels[-1]),
             make_act(),
@@ -192,9 +168,6 @@ class SegNet_3Head(nn.Module):
         x = self.encoder(x)
         x = self.decoder(x)
 
-        lmbda = self.head_lambda(x).view(-1, self.input_size, self.input_size)
-        mu    = self.head_mu(x).view(-1, self.input_size, self.input_size)
-        rho   = self.head_rho(x).view(-1, self.input_size, self.input_size)
+        lmbda = self.output(x).view(-1, self.input_size, self.input_size)
 
-        return lmbda, mu, rho
-
+        return lmbda
