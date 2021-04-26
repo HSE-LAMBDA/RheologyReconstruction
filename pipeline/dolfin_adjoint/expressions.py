@@ -21,6 +21,59 @@ class interpolant(UserExpression):
 		self.dy = (self.bbox[1][1] - self.bbox[0][1]) / float(self.ny)
 		
 	def eval(self, values, x):
+
+		if x[0] < self.bbox[0][0]:
+			
+			if x[1] > self.bbox[1][1]:
+				values[0] = self.values[0, -1]
+			elif x[1] < self.bbox[0][1]:
+				values[0] = self.values[0, 0]
+			else:
+				iy = int(x[1] / self.dy)
+				if iy == self.ny: iy -= 1
+				values[0] = self.values[0, iy]
+
+			return
+
+		if x[0] > self.bbox[1][0]:
+			
+			if x[1] > self.bbox[1][1]:
+				values[0] = self.values[-1, -1]
+			elif x[1] < self.bbox[0][1]:
+				values[0] = self.values[-1, 0]
+			else:
+				iy = int(x[1] / self.dy)
+				if iy == self.ny: iy -= 1
+				values[0] = self.values[-1, iy]
+
+			return
+
+		if x[1] < self.bbox[0][1]:
+
+			if x[0] > self.bbox[1][0]:
+				values[0] = self.values[-1, 0]
+			elif x[0] < self.bbox[0][0]:
+				values[0] = self.values[0, 0]
+			else:
+				ix = int(x[0] / self.dy)
+				if ix == self.nx: ix -= 1
+				values[0] = self.values[ix, 0]
+
+			return
+
+		if x[1] > self.bbox[1][1]:
+
+			if x[0] > self.bbox[1][0]:
+				values[0] = self.values[-1, -1]
+			elif x[0] < self.bbox[0][0]:
+				values[0] = self.values[0, -1]
+			else:
+				ix = int(x[0] / self.dy)
+				if ix == self.nx: ix -= 1
+				values[0] = self.values[ix, 0]
+
+			return
+		
 		
 		ix = int(x[0] / self.dx)
 		iy = int(x[1] / self.dy)
@@ -28,16 +81,14 @@ class interpolant(UserExpression):
 		if ix == self.nx: ix -= 1
 		if iy == self.ny: iy -= 1
 		
-		#print(2000. / self.dx)
-		
 		n1 = [ix - 1, iy - 1]
-		n2 = [ix - 1, iy		]
+		n2 = [ix - 1, iy	]
 		n3 = [ix - 1, iy + 1]
-		n4 = [ix		, iy - 1]
-		n5 = [ix		, iy]
-		n6 = [ix		, iy + 1]
+		n4 = [ix	, iy - 1]
+		n5 = [ix	, iy	]
+		n6 = [ix	, iy + 1]
 		n7 = [ix + 1, iy - 1]
-		n8 = [ix + 1, iy		]
+		n8 = [ix + 1, iy	]
 		n9 = [ix + 1, iy + 1]
 		
 		
@@ -67,16 +118,17 @@ class interpolant(UserExpression):
 			) for n in neighbours
 		])
 		
-		idx = np.argmin(dists)		 
-		
+		idx = np.argmin(dists)
 		values[0] = self.values[neighbours[idx][0], neighbours[idx][1]]
+
+		return
 
 	def value_shape(self): return ()
 
 
-class ConstantLoad(UserExpression):
+class CustomLoad(UserExpression):
 	"""
-	A custom expression for describing the constant load function
+	A custom expression for describing the load function
 	on the boundary of the region of integration
 	"""
 		
@@ -106,6 +158,79 @@ class ConstantLoad(UserExpression):
 		self.p0 = p0
 		self.pulse_center = pulse_center
 		self.pulse_radius = pulse_radius
+
+	def value_shape(self): return (2, )
+		
+	def eval_cell(self, values, x, cell): 
+		raise NotImplementedError
+
+
+class ConstantLoad(CustomLoad):
+
+	def eval_cell(self, values, x, cell):
+		
+		normal = 0.0
+		cell = Cell(self.mesh, cell.index)
+		
+		for f in facets(cell):
+			if f.exterior(): normal = f.normal()
+		
+		if isinstance(normal, float): normal = (0., 1.) 
+		factor = -self.p0 if (self.t <= self.tc) else  0.
+		
+		in_radius = np.sqrt(
+			(x[0] - self.pulse_center[0]) ** 2 + (x[1] - self.pulse_center[1]) ** 2
+		) <= self.pulse_radius
+
+		values[0] = normal[0] * factor * in_radius
+		values[1] = normal[1] * factor * in_radius
+
+		
+class SineLoad(CustomLoad):
+		
+	def __init__(self, mesh, t, tc, p0, pulse_center, pulse_radius, period, **kwargs):
+		
+		super().__init__(
+			mesh, t, tc, p0, pulse_center, pulse_radius, **kwargs
+		)
+
+		self.period = period
+		
+	
+	def eval_cell(self, values, x, cell):
+		
+		normal = 0.0
+		cell = Cell(self.mesh, cell.index)
+		
+		for f in facets(cell):
+			if f.exterior(): normal = f.normal()
+		
+		if isinstance(normal, float): normal = (0., 1.) 
+
+		factor = -self.p0 * np.cos(2 * np.pi * self.t / self.period) if (self.t <= self.tc) else  0.
+		
+		in_radius = np.sqrt(
+			(x[0] - self.pulse_center[0]) ** 2 + (x[1] - self.pulse_center[1]) ** 2
+		) <= self.pulse_radius
+
+		values[0] = normal[0] * factor * in_radius
+		values[1] = normal[1] * factor * in_radius
+
+
+class GaussianLoad(CustomLoad):
+		
+	def __init__(
+		self, mesh, t, tc, 
+		p0, pulse_center, pulse_radius,
+		period, mu, sigma, 
+		**kwargs
+	):
+		
+		super().__init__(mesh, t, tc, p0, pulse_center, pulse_radius, **kwargs)
+
+		self.period = period
+		self.mu     = mu
+		self.sigma  = sigma
 		
 	def eval_cell(self, values, x, cell):
 		
@@ -116,7 +241,12 @@ class ConstantLoad(UserExpression):
 			if f.exterior(): normal = f.normal()
 		
 		if isinstance(normal, float): normal = (0., 1.) 
-		factor = (-self.p0 * self.t/ self.tc) if (self.t <= self.tc) else  0.
+
+		factor_sine  = np.cos(2 * np.pi * self.t / self.period)
+		factor_gauss = 1 / m.sqrt(np.pi * 2 * self.sigma) *\
+					   np.exp(- ((self.t - self.mu) ** 2) / 2. / (self.sigma ** 2)) 
+		
+		factor = -self.p0 * factor_sine * factor_gauss if (self.t <= self.tc) else  0.
 		
 		in_radius = np.sqrt(
 			(x[0] - self.pulse_center[0]) ** 2 + (x[1] - self.pulse_center[1]) ** 2
@@ -124,9 +254,6 @@ class ConstantLoad(UserExpression):
 
 		values[0] = normal[0] * factor * in_radius
 		values[1] = normal[1] * factor * in_radius
-
-		
-	def value_shape(self): return (2, )
 
 
 class AdjointLoad(UserExpression):
@@ -139,7 +266,7 @@ class AdjointLoad(UserExpression):
 	@staticmethod
 	def delta(x, p, scale, magnitude):
 		r = (x[0] - p[0]) ** 2 + (x[1] - p[1]) ** 2
-		factor = np.sqrt(1 / np.pi / scale) * np.exp(-r / scale)
+		factor = np.sqrt(1 / np.pi / scale) * np.exp(-r / 2. / scale ** 2)
 
 		return magnitude * factor
 
@@ -156,24 +283,23 @@ class AdjointLoad(UserExpression):
 
 		self.dt  = self.integration_time / float(len(magnitudes))
 
-		#stretch factor, maybe should be fine-tuned, idk
-		self.a   = 10.
+		#stretch factor should be finetuned
+		#SUGGESTION: make sanity check for regular problem on the same mesh
+		
+		self.a   = 1.
 
 	def eval(self, values, x): # cell):
 
 		i = min(len(self.magnitudes) - 1, m.floor(self.t / self.dt))
+		j = min(len(self.magnitudes) - 1, m.ceil(self.t / self.dt))
 
-		#normal = 0.0
-		#cell = Cell(self.mesh, cell.index)
-		
-		#for f in facets(cell): 
-		#	if f.exterior(): normal = f.normal()
-		#if isinstance(normal, float): normal = (0., 1.)
+		alpha = (self.t - self.dt * float(i)) / self.dt
 
 		total_magnitude = np.zeros(2)
 
-		for j, p in enumerate(self.detector_coords):
-			total_magnitude += self.delta(x, p, self.a, self.magnitudes[i, j])
+		for k, p in enumerate(self.detector_coords):
+			total_magnitude += self.delta(
+				x, p, self.a, self.magnitudes[i, k]*alpha + self.magnitudes[j, k]*(1-alpha))
 
 		values[0] = total_magnitude[0]
 		values[1] = total_magnitude[1]
