@@ -80,9 +80,10 @@ def read_data():
 
 def show(data, title):
     fig, ax = plt.subplots()
+    ax.set_aspect('equal')
 
     im = ax.pcolormesh(np.linspace(0.0, (NUM_X - 1) * DX, NUM_X), np.linspace(-(NUM_Z - 1) * DZ, 0.0, NUM_Z), data)
-    fig.colorbar(im, ax=ax)
+    fig.colorbar(im, ax=ax, orientation='horizontal')
     ax.set_title(title)
 
     fig.tight_layout()

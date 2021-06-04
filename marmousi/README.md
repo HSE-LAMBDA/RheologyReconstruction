@@ -12,3 +12,9 @@
 ```
 python3 read_marmousi2.py
 ```
+
+Собственно, картинки:
+
+![Density](img/marmousi2_density.png)
+![Cp](img/marmousi2_cp.png)
+![Cs](img/marmousi2_cs.png)
