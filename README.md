@@ -1,0 +1,1 @@
+# Rheology reconstruction from seismograms using NeuralODE.
