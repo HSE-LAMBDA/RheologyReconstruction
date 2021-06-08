@@ -1,0 +1,1 @@
+# Кheology кeconstruction from seismograms using NeuralODE.
