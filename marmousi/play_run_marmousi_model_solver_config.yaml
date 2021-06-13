@@ -1,0 +1,49 @@
+---
+
+  mesh:
+    mesh_type: regular
+    bounding_box: # points to form integration area
+      p1: [0.0, 0.0]
+      p2: [6000, 3025]
+    nx: 241
+    ny: 122
+
+
+  detectors:
+    layout_type: uniform
+    location: top
+    number_of_detectors: 128
+
+
+  physics: # scale and factor for each rheological parameters
+      lambda:
+        scale_lambda : 0
+        factor_lambda: 1
+      mu:
+        scale_mu: 0
+        factor_mu: 1
+      rho:
+        scale_rho: 0
+        factor_rho: 1
+
+  task:
+    target_time: 2.0
+    source:
+      source_type: gaussian
+      location: top
+      center: [3000.0, 3025]
+      radius: 100.
+      magnitude: 1.0e+06
+      cutoff_time: 0.02
+      period: 0.04
+      mu: 0.01
+      sigma: 0.01
+
+  method:
+    polynomial_type: CG
+    polynomial_order: 2
+    time_steps: 120
+    alphas: # two constants for generalized alpha-timestepping
+      alpha_f: 0.4
+      alpha_m: 0.2
+    LU_solver: petsc
