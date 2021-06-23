@@ -212,7 +212,7 @@ class acoustics_solver():
                 u_next[:,-1,2] = p0
                 u_next[:,-1,1] = riemans_next[:,0,1] + p0 / (self.cp[:,0] * self.rho[:,0])
 
-                buffer[:, -i] = np.copy(u_next[:,-2,2])
+                buffer[:, -i-1] = np.copy(u_next[:,-2,2])
 
                 if self.dump_vtk:
                     gridToVTK(os.path.join(self.dump_dir, "u" + str(i + 1)), self.x, self.y, self.z,
