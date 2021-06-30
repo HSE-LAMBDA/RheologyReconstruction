@@ -36,7 +36,7 @@ class acoustics_solver():
         self.T = 0
 
         max_cp = np.max(self.cp)
-        numerical_method_recommended_tau = 0.5 * min(self.hx / max_cp, self.hy / max_cp)
+        numerical_method_recommended_tau = 0.45 * min(self.hx / max_cp, self.hy / max_cp)
 
         if self.verbose:
             print("Numerical time step recommendation:", numerical_method_recommended_tau)
@@ -138,14 +138,15 @@ class acoustics_solver():
         c1p = steps * (- self.hx + steps) / (2 * self.hx * self.hx)
         c2p = (self.hx + steps) * (- self.hx + steps) / (- self.hx * self.hx)
         c3p = (self.hx + steps) * steps / (2 * self.hx * self.hx)
+        c_pos = (c1p, c2p, c3p)
 
         # negative direction
         c1m = steps * (self.hx + steps) / (2 * self.hx * self.hx)
         c2m = (- self.hx + steps) * (self.hx + steps) / (- self.hx * self.hx)
         c3m = (- self.hx + steps) * steps / (2 * self.hx * self.hx)
+        c_neg = (c1m, c2m, c3m)
 
         # Time stepping using space-split scheme.
-        # TODO: the formulas below are monkey-coded a bit, but let's refactor them later (if required)
         for i in range(self.number_of_records):
             if self.verbose:
                 print("Stepping for the time record", i)
@@ -154,64 +155,16 @@ class acoustics_solver():
                 if self.verbose:
                     print("Step", j)
 
-                ### X step
-
-                u_lefts = np.pad(u_prev, ((1, 0),(0,0),(0,0)), mode='constant', constant_values=0)[:-1,:,:]
-                u_rights = np.pad(u_prev, ((0, 1),(0,0),(0,0)), mode='constant', constant_values=0)[1:,:,:]
-
-                rieman_invs_here = np.einsum('qijk,qik->qij', Ux, u_prev)
-                rieman_invs_left = np.einsum('qijk,qik->qij', Ux, u_lefts)
-                rieman_invs_right = np.einsum('qijk,qik->qij', Ux, u_rights)
-
-                limiter_min = np.min([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
-                limiter_max = np.max([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
-
-                rieman_invs_pos = c1m * rieman_invs_left[:,:, 0] + c2m * rieman_invs_here[:,:, 0] + c3m * rieman_invs_right[:,:, 0]
-                rieman_invs_neg = c1p * rieman_invs_left[:,:, 1] + c2p * rieman_invs_here[:,:, 1] + c3p * rieman_invs_right[:,:, 1]
-                rieman_invs_zero = rieman_invs_here[:,:, 2]
-
-                riemans_next = np.zeros((self.num_points_x, self.num_points_y, 3))
-                riemans_next[:,:, 0] = rieman_invs_pos
-                riemans_next[:,:, 1] = rieman_invs_neg
-                riemans_next[:,:, 2] = rieman_invs_zero
-
-                riemans_next = np.max([riemans_next, limiter_min], axis=0)
-                riemans_next = np.min([riemans_next, limiter_max], axis=0)
-
-                u_next = np.einsum('qijk,qik->qij', Ux1, riemans_next)
-
-                ### Y step
-
-                u_bottoms = np.pad(u_next, ((0, 0), (1, 0), (0, 0)), mode='constant', constant_values=0)[:,:-1,:]
-                u_tops = np.pad(u_next, ((0, 0), (0, 1), (0, 0)), mode='constant', constant_values=0)[:,1:,:]
-
-                rieman_invs_here = np.einsum('qijk,qik->qij', Uy, u_next)
-                rieman_invs_left = np.einsum('qijk,qik->qij', Uy, u_bottoms)
-                rieman_invs_right = np.einsum('qijk,qik->qij', Uy, u_tops)
-
-                limiter_min = np.min([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
-                limiter_max = np.max([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
-
-                rieman_invs_pos = c1m * rieman_invs_left[:,:, 0] + c2m * rieman_invs_here[:,:, 0] + c3m * rieman_invs_right[:,:, 0]
-                rieman_invs_neg = c1p * rieman_invs_left[:,:, 1] + c2p * rieman_invs_here[:,:, 1] + c3p * rieman_invs_right[:,:, 1]
-                rieman_invs_zero = rieman_invs_here[:,:, 2]
-
-                riemans_next = np.zeros((self.num_points_x, self.num_points_y, 3))
-                riemans_next[:,:, 0] = rieman_invs_pos
-                riemans_next[:,:, 1] = rieman_invs_neg
-                riemans_next[:,:, 2] = rieman_invs_zero
-
-                riemans_next = np.max([riemans_next, limiter_min], axis=0)
-                riemans_next = np.min([riemans_next, limiter_max], axis=0)
-
-                u_next = np.einsum('qijk,qik->qij', Uy1, riemans_next)
+                # Two steps of 2D space-split scheme
+                u_next, inv_next = self.do_split_step(u_prev, Uy, Uy1, c_neg, c_pos, direction=1)
+                u_next, inv_next = self.do_split_step(u_next, Ux, Ux1, c_neg, c_pos, direction=0)
 
                 # emitting and reflecting top border
                 form = self.source(self.T)
                 p0 = np.zeros(self.num_points_x)
                 p0[self.source_start_point: self.source_end_point] = form
                 u_next[:,-1,2] = p0
-                u_next[:,-1,1] = riemans_next[:,0,1] + p0 / (self.cp[:,0] * self.rho[:,0])
+                u_next[:,-1,1] = inv_next[:,0,1] + p0 / (self.cp[:,0] * self.rho[:,0])
 
                 buffer[:, -i-1] = np.copy(u_next[:,-2,2])
 
@@ -226,3 +179,38 @@ class acoustics_solver():
                 self.T += self.tau
 
         return buffer.T
+
+    def do_split_step(self, u_prev, U, U1, c_neg, c_pos, direction = -1):
+        c1m, c2m, c3m = c_neg
+        c1p, c2p, c3p = c_pos
+
+        if direction == 0:
+            u_lefts = np.pad(u_prev, ((1, 0), (0, 0), (0, 0)), mode='constant', constant_values=0)[:-1, :, :]
+            u_rights = np.pad(u_prev, ((0, 1), (0, 0), (0, 0)), mode='constant', constant_values=0)[1:, :, :]
+        elif direction == 1:
+            u_lefts = np.pad(u_prev, ((0, 0), (1, 0), (0, 0)), mode='constant', constant_values=0)[:, :-1, :]
+            u_rights = np.pad(u_prev, ((0, 0), (0, 1), (0, 0)), mode='constant', constant_values=0)[:, 1:, :]
+        else:
+            raise RuntimeError("Incorrect axis for 2D method")
+
+        rieman_invs_here = np.einsum('qijk,qik->qij', U, u_prev)
+        rieman_invs_left = np.einsum('qijk,qik->qij', U, u_lefts)
+        rieman_invs_right = np.einsum('qijk,qik->qij', U, u_rights)
+
+        limiter_min = np.min([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
+        limiter_max = np.max([rieman_invs_here, rieman_invs_left, rieman_invs_right], axis=0)
+
+        rieman_invs_pos = c1m * rieman_invs_left[:, :, 0] + c2m * rieman_invs_here[:, :, 0] + c3m * rieman_invs_right[:,:, 0]
+        rieman_invs_neg = c1p * rieman_invs_left[:, :, 1] + c2p * rieman_invs_here[:, :, 1] + c3p * rieman_invs_right[:,:, 1]
+        rieman_invs_zero = rieman_invs_here[:, :, 2]
+
+        riemans_next = np.zeros((self.num_points_x, self.num_points_y, 3))
+        riemans_next[:, :, 0] = rieman_invs_pos
+        riemans_next[:, :, 1] = rieman_invs_neg
+        riemans_next[:, :, 2] = rieman_invs_zero
+
+        riemans_next = np.max([riemans_next, limiter_min], axis=0)
+        riemans_next = np.min([riemans_next, limiter_max], axis=0)
+
+        u_next = np.einsum('qijk,qik->qij', U1, riemans_next)
+        return u_next, riemans_next
