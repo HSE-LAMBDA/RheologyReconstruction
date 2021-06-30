@@ -12,7 +12,7 @@ def step_source(t):
 class acoustics_solver():
 
     def __init__(self, x_size, y_size, cp, rho, target_time, recording_time_step,
-                 source_width, source_function = step_source,
+                 source_width, source_function = step_source, source_center_in_percents = 50,
                  dump_vtk = False, dump_dir = "data", verbose = False):
 
         assert (cp.shape == rho.shape)
@@ -60,8 +60,9 @@ class acoustics_solver():
                       pointData = {"Cp" : self.cp.T.ravel(), "rho" : self.rho.T.ravel(), "K" : self.K.T.ravel()})
 
         source_half_width_in_points = int(source_width / (2 * self.hx))
-        self.source_start_point = (self.num_points_x // 2) - source_half_width_in_points
-        self.source_end_point = (self.num_points_x // 2) + source_half_width_in_points
+        source_center_idx = int(self.num_points_x * source_center_in_percents / 100)
+        self.source_start_point = source_center_idx - source_half_width_in_points
+        self.source_end_point = source_center_idx + source_half_width_in_points
 
         self.source = source_function
         if self.verbose:
