@@ -1,0 +1,4 @@
+outs:
+- md5: c77b28cc4977095a47d686d0a4b9c37d
+  size: 16234462752
+  path: seismo_records_china_detailed.tar.xz
